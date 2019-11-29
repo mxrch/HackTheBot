@@ -3,3 +3,7 @@ users.txt
 boxs.txt
 owns.py
 test.py
+body.txt
+__pycache__/
+lib/__pycache__/
+resources/__pycache__/

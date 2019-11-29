@@ -6,7 +6,7 @@ import config as cfg
 description = '''HideAndSec's slave bot'''
 bot = commands.Bot(command_prefix='>', description=description)
 
-htbot = HTBot(cfg.HTB['username'], cfg.HTB['password'], cfg.HTB['api_token'])
+htbot = HTBot(cfg.HTB['email'], cfg.HTB['password'], cfg.HTB['api_token'])
 
 #Start
 
@@ -16,6 +16,7 @@ async def on_ready():
     print(bot.user.name)
     print(bot.user.id)
     print('------')
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=">help"))
 
 #Tasks
 
@@ -23,12 +24,17 @@ class tasksCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.refresh_boxs.start()
+        self.htb_login.start()
 
     def refresh_boxs_stop(self):
         self.refresh_boxs.stop()
 
     def refresh_boxs_start(self):
         self.refresh_boxs.start()
+
+    @tasks.loop(seconds=1800.0)
+    async def htb_login(self):
+        htbot.login()
 
     @tasks.loop(seconds=60.0)
     async def refresh_boxs(self):
@@ -100,7 +106,7 @@ async def verify(ctx, content=""):
             await send_verif_instructions(ctx.author)
 
 @bot.command()
-async def get_box(ctx, name):
+async def get_box(ctx, name=""):
     """Get info on a box"""
     if name:
         tasks = bot.get_cog('tasksCog')
@@ -130,9 +136,27 @@ async def last_box(ctx):
         pass
 
 @bot.command()
-async def test(ctx):
-    """Test command"""
-    pass
+async def get_user(ctx, name=""):
+    """Stalk your competitors"""
+    if name:
+        htb_id = htbot.htb_id_by_name(name)
+        if htb_id:
+            embed = htbot.get_user(str(htb_id))
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send("Utilisateur non trouvé.")
+    else:
+        await ctx.send("T'as pas oublié un truc ? :tired_face:")
+
+@bot.command()
+async def me(ctx):
+    """Get your HTB info"""
+    htb_id = htbot.discord_to_htb_id(ctx.author.id)
+    if htb_id:
+        embed = htbot.get_user(str(htb_id))
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("Vous n'avez pas enregistré de compte HTB.")
 
 bot.add_cog(tasksCog(bot))
 bot.run(cfg.discord['bot_token'])
