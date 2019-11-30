@@ -17,28 +17,47 @@ async def on_ready():
     print(bot.user.id)
     print('------')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=">help"))
+    bot.add_cog(tasksCog(bot))
 
 #Tasks
 
 class tasksCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.refresh_boxs.start()
         self.htb_login.start()
-
-    def refresh_boxs_stop(self):
-        self.refresh_boxs.stop()
-
-    def refresh_boxs_start(self):
+        self.check_notif.start()
         self.refresh_boxs.start()
+        self.refresh_all_users.start()
 
-    @tasks.loop(seconds=1800.0)
+    @tasks.loop(seconds=5.0) #Toutes les 5 secondes, check les notifications
+    async def check_notif(self):
+        notif = htbot.notif
+        if notif["update_role"]["state"]:
+            content = notif["update_role"]["content"]
+            await update_role(content["discord_id"], content["prev_rank"], content["new_rank"])
+            htbot.notif["update_role"]["state"] = False
+
+        elif notif["new_user"]["state"]:
+            content = notif["new_user"]["content"]
+            shoutbox = get_shoutbox_channel()
+            guilds = bot.guilds
+            for guild in guilds:
+                if guild.name == cfg.discord['guild_name']:
+                    member = guild.get_member(content["discord_id"])
+            await shoutbox.send("👋 Bienvenue {} ! Heureux de t'avoir parmis nous.\nTu es arrivé avec le rang {} !".format(member.mention, content["level"]))
+            htbot.notif["new_role"]["state"] = False
+
+    @tasks.loop(seconds=1800.0) #Toutes les 30 minutes
     async def htb_login(self):
         htbot.login()
 
-    @tasks.loop(seconds=60.0)
+    @tasks.loop(seconds=60.0) #Toutes les minutes
     async def refresh_boxs(self):
         htbot.refresh_boxs()
+
+    @tasks.loop(seconds=600.0) #Toutes les 10 minutes
+    async def refresh_all_users(self):
+        htbot.refresh_all_users()
 
 #Commands
 
@@ -158,5 +177,45 @@ async def me(ctx):
     else:
         await ctx.send("Vous n'avez pas enregistré de compte HTB.")
 
-bot.add_cog(tasksCog(bot))
+@bot.command()
+async def leaderboard(ctx):
+    """Get the leaderboard of the guild"""
+    board = htbot.leaderboard()
+    if board:
+        await ctx.send(embed=board)
+    else:
+        await ctx.send("Aucun compte HTB enregistré.\nFaites >verify pour le faire !")
+
+async def update_role(discord_id, prev_rank, new_rank):
+    guilds = bot.guilds
+    for guild in guilds:
+        if guild.name == cfg.discord['guild_name']:
+            member = guild.get_member(discord_id)
+            roles = guild.roles
+            role_to_delete_name = cfg.roles[prev_rank.lower()]
+            role_to_add_name = cfg.roles[new_rank.lower()]
+            for role in roles:
+                if role.name == role_to_add_name:
+                    role_to_add = role
+            roles = member.roles
+            count = 0
+            for role in roles:
+                if role.name == role_to_delete_name:
+                    roles[count] = role_to_add
+                count += 1
+            await member.edit(roles=roles)
+
+    shoutbox = get_shoutbox_channel()
+    await shoutbox.send("🎉 Félicitations {}, tu es passé au rang {} ! 🎉".format(member.mention, new_rank))
+
+
+def get_shoutbox_channel():
+    guilds = bot.guilds
+    for guild in guilds:
+        if guild.name == cfg.discord['guild_name']:
+            channels = guild.channels
+            for channel in channels:
+                if channel.name == "shoutbox":
+                    return channel
+
 bot.run(cfg.discord['bot_token'])
