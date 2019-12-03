@@ -21,6 +21,13 @@ class HTBot():
             "user-agent": "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/40.0.2214.85 Safari/537.36"
         }
         self.payload = {'api_token': self.api_token}
+        self.last_checked = []
+        self.regexs = {
+            "box_pwn": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> owned (.*) on <a(?:.*)profile\/(?:\d+)\">(.*)<\/a> <a(?:.*)",
+            "new_box_incoming": "(?:.*)Get ready to spill some (?:.* blood .*! <.*>)(.*)<(?:.* available in <.*>)(.*)<(?:.*)",
+            "new_box_out": "(?:.*)>(.*)<(?:.*) is mass-powering on! (?:.*)"
+
+        }
         self.notif = {
             "update_role": {
                 "state": False,
@@ -35,6 +42,22 @@ class HTBot():
                 "content": {
                     "discord_id": "",
                     "level": ""
+                }
+            },
+            "new_box": {
+                "state": False,
+                "content": {
+                    "incoming": False,
+                    "box_name": "",
+                    "time": ""
+                }
+            },
+            "box_pwn": {
+                "state": False,
+                "content": {
+                    "discord_id": "",
+                    "pwn": "",
+                    "box_name": "",
                 }
             }
         }
@@ -67,15 +90,17 @@ class HTBot():
 
     def refresh_boxs(self):
         print("Rafraichissement des boxs...")
+
         req = requests.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
 
         if req.status_code == 200:
             with open("boxs.txt", "w") as f:
                 f.write(req.text)
+
             print("La liste des boxs a été mise à jour !")
             return True
-        else:
-            return False
+
+        return False
 
     def get_box(self, name="name", last=False):
         with open("boxs.txt", "r") as f:
@@ -189,23 +214,27 @@ class HTBot():
 
     def extract_user_info(self, id):
         infos = {}
-        req = self.session.get("https://www.hackthebox.eu/home/users/profile/" + id)
-        body = req.text
-        html = Selector(text=body)
+        req = self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(id))
 
-        infos["username"] = html.css('div.header-title > h3::text').get().strip()
-        infos["avatar"] = html.css('div.header-icon > img::attr(src)').get()
-        infos["points"] = html.css('div.header-title > small > span[title=Points]::text').get().strip()
-        infos["systems"] = html.css('div.header-title > small > span[title="Owned Systems"]::text').get().strip()
-        infos["users"] = html.css('div.header-title > small > span[title="Owned Users"]::text').get().strip()
-        infos["respect"] = html.css('div.header-title > small > span[title=Respect]::text').get().strip()
-        infos["country"] = Selector(text=html.css('div.header-title > small > span').getall()[4]).css('span::attr(title)').get().strip()
-        infos["level"] = html.css('div.header-title > small > span::text').extract()[-1].strip()
-        infos["rank"] = re.search(r'position (\d+) of the Hall of Fame', body).group(1)
-        infos["challs"] = re.search(r'has solved (\d+) challenges', body).group(1)
-        infos["ownership"] = html.css('div.progress-bar-success > span::text').get()
+        if req.status_code == 200:
+            body = req.text
+            html = Selector(text=body)
 
-        return infos
+            infos["username"] = html.css('div.header-title > h3::text').get().strip()
+            infos["avatar"] = html.css('div.header-icon > img::attr(src)').get()
+            infos["points"] = html.css('div.header-title > small > span[title=Points]::text').get().strip()
+            infos["systems"] = html.css('div.header-title > small > span[title="Owned Systems"]::text').get().strip()
+            infos["users"] = html.css('div.header-title > small > span[title="Owned Users"]::text').get().strip()
+            infos["respect"] = html.css('div.header-title > small > span[title=Respect]::text').get().strip()
+            infos["country"] = Selector(text=html.css('div.header-title > small > span').getall()[4]).css('span::attr(title)').get().strip()
+            infos["level"] = html.css('div.header-title > small > span::text').extract()[-1].strip()
+            infos["rank"] = re.search(r'position (\d+) of the Hall of Fame', body).group(1)
+            infos["challs"] = re.search(r'has solved (\d+) challenges', body).group(1)
+            infos["ownership"] = html.css('div.progress-bar-success > span::text').get()
+
+            return infos
+
+        return False
 
     def get_user(self, id):
         infos = self.extract_user_info(id)
@@ -225,7 +254,7 @@ class HTBot():
 
         count = 0
         for user in users:
-            if str(user["htb_id"]) == id:
+            if user["htb_id"] == id:
                 infos = self.extract_user_info(id)
 
                 try:
@@ -242,6 +271,7 @@ class HTBot():
                 users[count]["country"] = infos["country"]
 
                 if new:
+                    print("New user détecté !")
                     self.notif["new_user"]["content"]["discord_id"] = users[count]["discord_id"]
                     self.notif["new_user"]["content"]["level"] = infos["level"]
                     self.notif["new_user"]["state"] = True
@@ -269,7 +299,7 @@ class HTBot():
             users = []
 
         for user in users:
-            self.refresh_user(str(user["htb_id"]))
+            self.refresh_user(user["htb_id"])
         print("Les users ont été mis à jour !")
 
     def leaderboard(self):
@@ -299,3 +329,78 @@ class HTBot():
         embed = discord.Embed(title="🏆 Leaderboard 🏆 | {}".format(cfg.discord["guild_name"]), color=0x9acc14, description=text)
 
         return embed
+
+    def shoutbox(self):
+        req = self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
+
+        if req.status_code == 200:
+            history = json.loads(req.text)["html"]
+            last_checked = self.last_checked
+            checked = []
+            regexs = self.regexs
+
+            for msg in history:
+                if msg not in last_checked:
+
+                    #Check les box pwns
+                    result = re.compile(regexs["box_pwn"]).findall(msg)
+                    if result and len(result[0]) == 3:
+                        result = result[0]
+
+                        if path.exists("users.txt"):
+                            with open("users.txt", "r") as f:
+                                users = json.loads(f.read())
+                        else:
+                            users = []
+
+                        for user in users:
+                            if str(user["htb_id"]) == result[0]:
+                                self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
+
+                                if result[1] == "system":
+                                    self.notif["box_pwn"]["content"]["pwn"] = "root"
+                                else:
+                                    self.notif["box_pwn"]["content"]["pwn"] = result[1]
+
+                                self.notif["box_pwn"]["content"]["box_name"] = result[2]
+                                self.notif["box_pwn"]["state"] = True
+
+                                checked.append(msg)
+                                self.last_checked = (checked[::-1] + last_checked)[:20]
+
+                                self.refresh_user(int(result[0])) #On met à jour les infos du user
+                                return True
+
+                    #Check box incoming
+                    result = re.compile(regexs["new_box_incoming"]).findall(msg)
+                    if result and len(result[0]) == 2:
+                        result = result[0]
+
+                        self.notif["new_box"]["content"]["box_name"] = result[0]
+                        self.notif["new_box"]["content"]["time"] = result[1]
+                        self.notif["new_box"]["content"]["incoming"] = True
+                        self.notif["new_box"]["state"] = True
+
+                        checked.append(msg)
+                        self.last_checked = (checked[::-1] + last_checked)[:20]
+
+                        return True
+
+                    #Check new box
+                    result = re.compile(regexs["new_box_out"]).findall(msg)
+                    if result and len(result[0]) == 1:
+                        result = result[0]
+
+                        self.notif["new_box"]["content"]["box_name"] = result[0]
+                        self.notif["new_box"]["content"]["time"] = ""
+                        self.notif["new_box"]["content"]["incoming"] = False
+                        self.notif["new_box"]["state"] = True
+
+                        checked.append(msg)
+                        self.last_checked = (checked[::-1] + last_checked)[:20]
+
+                        return True
+
+                    checked.append(msg)
+
+            self.last_checked = (checked[::-1] + last_checked)[:20]

@@ -28,10 +28,12 @@ class tasksCog(commands.Cog):
         self.check_notif.start()
         self.refresh_boxs.start()
         self.refresh_all_users.start()
+        self.refresh_shoutbox.start()
 
-    @tasks.loop(seconds=5.0) #Toutes les 5 secondes, check les notifications
+    @tasks.loop(seconds=3.0) #Toutes les 3 secondes, check les notifications
     async def check_notif(self):
         notif = htbot.notif
+        #print(notif)
         if notif["update_role"]["state"]:
             content = notif["update_role"]["content"]
             await update_role(content["discord_id"], content["prev_rank"], content["new_rank"])
@@ -46,6 +48,32 @@ class tasksCog(commands.Cog):
                     member = guild.get_member(content["discord_id"])
             await shoutbox.send("👋 Bienvenue {} ! Heureux de t'avoir parmis nous.\nTu es arrivé avec le rang {} !".format(member.mention, content["level"]))
             htbot.notif["new_role"]["state"] = False
+
+        elif notif["box_pwn"]["state"]:
+            content = notif["box_pwn"]["content"]
+            shoutbox = get_shoutbox_channel()
+            guilds = bot.guilds
+            for guild in guilds:
+                if guild.name == cfg.discord['guild_name']:
+                    member = guild.get_member(content["discord_id"])
+            await shoutbox.send("👏 {} a eu le {} de {} !".format(member.mention, content["pwn"], content["box_name"]))
+            htbot.notif["box_pwn"]["state"] = False
+
+        elif notif["new_box"]["state"]:
+            content = notif["new_box"]["content"]
+            shoutbox = get_shoutbox_channel()
+            if content["incoming"] == True:
+                await shoutbox.send("⏱️ La box {} arrive dans {} ! ⏱️".format(content["box_name"], content["time"]))
+            else:
+                await shoutbox.send("@everyone 🚨 La nouvelle box {} est en ligne ! 🚨\nAurez-vous le first blood ? 🩸".format(content["box_name"]))
+                box = htbot.get_box(content["box_name"])
+                await shoutbox.send("", embed=box)
+            htbot.notif["new_box"]["state"] = False
+
+
+    @tasks.loop(seconds=5.0) #Toutes les 5 secondes
+    async def refresh_shoutbox(self):
+        htbot.shoutbox()
 
     @tasks.loop(seconds=1800.0) #Toutes les 30 minutes
     async def htb_login(self):
