@@ -24,8 +24,10 @@ class HTBot():
         self.last_checked = []
         self.regexs = {
             "box_pwn": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> owned (.*) on <a(?:.*)profile\/(?:\d+)\">(.*)<\/a> <a(?:.*)",
+            "chall_pwn": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> solved challenge <(?:.*)>(.*)<(?:.*)><(?:.*)> from <(?:.*)>(.*)<(?:.*)><(?:.*)",
             "new_box_incoming": "(?:.*)Get ready to spill some (?:.* blood .*! <.*>)(.*)<(?:.* available in <.*>)(.*)<(?:.*)",
-            "new_box_out": "(?:.*)>(.*)<(?:.*) is mass-powering on! (?:.*)"
+            "new_box_out": "(?:.*)>(.*)<(?:.*) is mass-powering on! (?:.*)",
+            "vip_upgrade": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> became a <(?:.*)><(?:.*)><(?:.*)> V.I.P <(?:.*)"
 
         }
         self.notif = {
@@ -58,6 +60,20 @@ class HTBot():
                     "discord_id": "",
                     "pwn": "",
                     "box_name": "",
+                }
+            },
+            "chall_pwn": {
+                "state": False,
+                "content": {
+                    "discord_id": "",
+                    "chall_name": "",
+                    "chall_type": ""
+                }
+            },
+            "vip_upgrade": {
+                "state": False,
+                "content": {
+                    "discord_id": ""
                 }
             }
         }
@@ -371,6 +387,30 @@ class HTBot():
                                 self.refresh_user(int(result[0])) #On met à jour les infos du user
                                 return True
 
+                    #Check les challenges pwns
+                    result = re.compile(regexs["chall_pwn"]).findall(msg)
+                    if result and len(result[0]) == 3:
+                        result = result[0]
+
+                        if path.exists("users.txt"):
+                            with open("users.txt", "r") as f:
+                                users = json.loads(f.read())
+                        else:
+                            users = []
+
+                        for user in users:
+                            if str(user["htb_id"]) == result[0]:
+                                self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
+                                self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
+                                self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
+                                self.notif["chall_pwn"]["state"] = True
+
+                                checked.append(msg)
+                                self.last_checked = (checked[::-1] + last_checked)[:20]
+
+                                self.refresh_user(int(result[0])) #On met à jour les infos du user
+                                return True
+
                     #Check box incoming
                     result = re.compile(regexs["new_box_incoming"]).findall(msg)
                     if result and len(result[0]) == 2:
@@ -402,5 +442,27 @@ class HTBot():
                         return True
 
                     checked.append(msg)
+
+                    #Check VIP upgrade
+                    result = re.compile(regexs["vip_upgrade"]).findall(msg)
+                    if result and len(result[0]) == 1:
+                        result = result[0]
+
+                        if path.exists("users.txt"):
+                            with open("users.txt", "r") as f:
+                                users = json.loads(f.read())
+                        else:
+                            users = []
+
+                        for user in users:
+                            if str(user["htb_id"]) == result[0]:
+                                self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
+                                self.notif["vip_upgrade"]["state"] = True
+
+                                checked.append(msg)
+                                self.last_checked = (checked[::-1] + last_checked)[:20]
+
+                                self.refresh_user(int(result[0])) #On met à jour les infos du user
+                                return True
 
             self.last_checked = (checked[::-1] + last_checked)[:20]

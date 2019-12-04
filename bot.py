@@ -59,6 +59,16 @@ class tasksCog(commands.Cog):
             await shoutbox.send("👏 {} a eu le {} de {} !".format(member.mention, content["pwn"], content["box_name"]))
             htbot.notif["box_pwn"]["state"] = False
 
+        elif notif["chall_pwn"]["state"]:
+            content = notif["chall_pwn"]["content"]
+            shoutbox = get_shoutbox_channel()
+            guilds = bot.guilds
+            for guild in guilds:
+                if guild.name == cfg.discord['guild_name']:
+                    member = guild.get_member(content["discord_id"])
+            await shoutbox.send("👏 {} a réussi le challenge {} de la catégorie {} !".format(member.mention, content["chall_name"], content["chall_type"]))
+            htbot.notif["chall_pwn"]["state"] = False
+
         elif notif["new_box"]["state"]:
             content = notif["new_box"]["content"]
             shoutbox = get_shoutbox_channel()
@@ -69,6 +79,16 @@ class tasksCog(commands.Cog):
                 box = htbot.get_box(content["box_name"])
                 await shoutbox.send("", embed=box)
             htbot.notif["new_box"]["state"] = False
+
+        elif notif["vip_upgrade"]["state"]:
+            content = notif["vip_upgrade"]["content"]
+            shoutbox = get_shoutbox_channel()
+            guilds = bot.guilds
+            for guild in guilds:
+                if guild.name == cfg.discord['guild_name']:
+                    member = guild.get_member(content["discord_id"])
+            await shoutbox.send("🍾 est devenu VIP {} ! Préparez le champagne et le caviar 🥂".format(member.mention))
+            htbot.notif["vip_upgrade"]["state"] = False
 
 
     @tasks.loop(seconds=5.0) #Toutes les 5 secondes
