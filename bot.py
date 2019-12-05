@@ -266,4 +266,30 @@ def get_shoutbox_channel():
                 if channel.name == "shoutbox":
                     return channel
 
+@bot.command()
+async def list_boxs(ctx, type=""):
+    """list all active boxs, by difficulty or not"""
+    type = type.lower()
+    if type:
+        if type in ["easy", "medium", "hard", "insane"]:
+            tasks = bot.get_cog('tasksCog')
+            tasks.refresh_boxs.stop()
+            embed = htbot.list_boxs(type)
+            await ctx.send("", embed=embed)
+            try:
+                tasks.refresh_boxs.start()
+            except RuntimeError:
+                pass
+        else:
+            await ctx.send("Difficulté inconnue.")
+    else:
+        tasks = bot.get_cog('tasksCog')
+        tasks.refresh_boxs.stop()
+        embed = htbot.list_boxs()
+        await ctx.send("", embed=embed)
+        try:
+            tasks.refresh_boxs.start()
+        except RuntimeError:
+            pass
+
 bot.run(cfg.discord['bot_token'])

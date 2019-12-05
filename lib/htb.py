@@ -1,11 +1,7 @@
-import os.path
 from os import path
-import sys
 import requests
 import re
 import json
-import time
-import random
 import discord
 from scrapy.selector import Selector
 import config as cfg
@@ -466,3 +462,60 @@ class HTBot():
                                 return True
 
             self.last_checked = (checked[::-1] + last_checked)[:20]
+
+    def list_boxs(self, type=""):
+        if path.exists("boxs.txt"):
+            with open("boxs.txt", "r") as f:
+                boxs = json.loads(f.read())
+
+        difficulty = {
+            "easy": {
+                "boxs": [],
+                "output": ""
+            },
+            "medium": {
+                "boxs": [],
+                "output": ""
+            },
+            "hard": {
+                "boxs": [],
+                "output": ""
+            },
+            "insane": {
+                "boxs": [],
+                "output": ""
+            }
+        }
+
+        for box in boxs:
+            if not box["retired"]:
+                if box["points"] == 20:
+                    difficulty["easy"]["boxs"].append(box)
+                elif box["points"] == 30:
+                    difficulty["medium"]["boxs"].append(box)
+                elif box["points"] == 40:
+                    difficulty["hard"]["boxs"].append(box)
+                elif box["points"] == 50:
+                    difficulty["insane"]["boxs"].append(box)
+
+        #If we have to list only boxs of a certain difficulty :
+        if type:
+            count = 0
+            for box in difficulty[type]["boxs"]:
+                count += 1
+                difficulty[type]["output"] = "{}{}. **{}** ({} ⭐)\n".format(difficulty[type]["output"], count, box["name"], box["rating"])
+
+            embed = discord.Embed(color=0x9acc14, title="Active boxs 💻 | {}".format(type.capitalize()))
+            embed.add_field(name=type.capitalize(), value=difficulty[type]["output"], inline=False)
+
+        else:
+            embed = discord.Embed(color=0x9acc14, title="Active boxs 💻")
+            for diff in difficulty:
+                count = 0
+                for box in difficulty[diff]["boxs"]:
+                    count += 1
+                    difficulty[diff]["output"] = "{}{}. **{}** ({} ⭐)\n".format(difficulty[diff]["output"], count, box["name"], box["rating"])
+
+                embed.add_field(name=diff.capitalize(), value=difficulty[diff]["output"], inline=False)
+
+        return embed
