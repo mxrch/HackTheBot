@@ -27,8 +27,9 @@ class tasksCog(commands.Cog):
         self.htb_login.start()
         self.check_notif.start()
         self.refresh_boxs.start()
+        self.manage_channels.start()
         self.refresh_all_users.start()
-        self.refresh_shoutbox.start()
+        #self.refresh_shoutbox.start()
 
     @tasks.loop(seconds=3.0) #Toutes les 3 secondes, check les notifications
     async def check_notif(self):
@@ -76,8 +77,8 @@ class tasksCog(commands.Cog):
                 await shoutbox.send("⏱️ La box {} arrive dans {} ! ⏱️".format(content["box_name"], content["time"]))
             else:
                 await shoutbox.send("@everyone 🚨 La nouvelle box {} est en ligne ! 🚨\nAurez-vous le first blood ? 🩸".format(content["box_name"]))
-                box = htbot.get_box(content["box_name"])
-                await shoutbox.send("", embed=box)
+                box = htbot.get_box(content["box_name"], matrix=True)
+                await shoutbox.send("", file=box["file"], embed=box["embed"])
             htbot.notif["new_box"]["state"] = False
 
         elif notif["vip_upgrade"]["state"]:
@@ -93,19 +94,38 @@ class tasksCog(commands.Cog):
 
     @tasks.loop(seconds=5.0) #Toutes les 5 secondes
     async def refresh_shoutbox(self):
-        htbot.shoutbox()
+        await htbot.shoutbox()
 
     @tasks.loop(seconds=1800.0) #Toutes les 30 minutes
     async def htb_login(self):
-        htbot.login()
+        await htbot.login()
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def refresh_boxs(self):
-        htbot.refresh_boxs()
+        await htbot.refresh_boxs()
 
     @tasks.loop(seconds=600.0) #Toutes les 10 minutes
     async def refresh_all_users(self):
-        htbot.refresh_all_users()
+        await htbot.refresh_all_users()
+
+    @tasks.loop(seconds=60.0) #Toutes les minutes
+    async def manage_channels(self):
+        guilds = bot.guilds
+        for guild in guilds:
+            if guild.name == cfg.discord['guild_name']:
+                categories = guild.categories
+                for category in categories:
+                    if "box-retired" in category.name.lower():
+                        box_retired_cat = category
+                    elif "box-active" in category.name.lower():
+                        box_active_cat = category
+                channels = box_active_cat.text_channels
+                for channel in channels:
+                    box_status = htbot.check_box(channel.name)
+                    if box_status == "retired":
+                        await channel.edit(category=box_retired_cat)
+                        await channel.send("🔒 **{}** a été retirée, le channel a donc été déplacé vers la catégorie **{}**. 🔒".format(channel.name.capitalize(), box_retired_cat.name))
+
 
 #Commands
 
@@ -115,7 +135,7 @@ async def hello(ctx):
     await ctx.send("Hello World")
 
 @bot.command()
-async def echo(ctx, *, content='bien essayé fdp'):
+async def echo(ctx, *, content='🤔'):
     """A simple echo command"""
     await ctx.send(content)
 
@@ -173,14 +193,25 @@ async def verify(ctx, content=""):
             await send_verif_instructions(ctx.author)
 
 @bot.command()
-async def get_box(ctx, name=""):
+async def get_box(ctx, name="", matrix=""):
     """Get info on a box"""
     if name:
         tasks = bot.get_cog('tasksCog')
         tasks.refresh_boxs.stop()
-        box = htbot.get_box(name)
+        if matrix:
+            if matrix.lower() == "matrix":
+                box = htbot.get_box(name, matrix=True)
+            else:
+                await ctx.send("Paramètres incorrectes.")
+                return False
+        else:
+            box = htbot.get_box(name)
+
         if box:
-            await ctx.send("", embed=box)
+            if matrix:
+                await ctx.send("", file=box["file"], embed=box["embed"])
+            else:
+                await ctx.send("", embed=box["embed"])
         else:
             await ctx.send("Cette box n'existe pas.")
         try:
@@ -191,12 +222,23 @@ async def get_box(ctx, name=""):
         await ctx.send("Tu n'as pas précisé la box.")
 
 @bot.command()
-async def last_box(ctx):
+async def last_box(ctx, matrix=""):
     """Get info on the newest box"""
     tasks = bot.get_cog('tasksCog')
     tasks.refresh_boxs.stop()
-    box = htbot.get_box(last=True)
-    await ctx.send("", embed=box)
+    if matrix:
+        if matrix.lower() == "matrix":
+            box = htbot.get_box(matrix=True, last=True)
+        else:
+            await ctx.send("Paramètres incorrectes.")
+            return False
+    else:
+        box = htbot.get_box(last=True)
+
+    if matrix:
+        await ctx.send("", file=box["file"], embed=box["embed"])
+    else:
+        await ctx.send("", embed=box["embed"])
     try:
         tasks.refresh_boxs.start()
     except RuntimeError:
@@ -291,5 +333,69 @@ async def list_boxs(ctx, type=""):
             tasks.refresh_boxs.start()
         except RuntimeError:
             pass
+
+@bot.command()
+async def work_on(ctx, box_name=""):
+    """Do this command when you start a new box"""
+
+    #Si le nom de la box est précisé
+    if box_name:
+        box_name = box_name.lower()
+        box_status = htbot.check_box(box_name)
+        if box_status:
+            guilds = bot.guilds
+            for guild in guilds:
+                if guild.name == cfg.discord['guild_name']:
+                    channels = guild.channels
+                    for channel in channels:
+                        if channel.name == box_name:
+                            await ctx.send("Le channel {} est à ta disposition, bonne chance ! ❤".format(channel.mention))
+                            return True
+
+                    #Si le channel n'existe pas encore
+                    categories = guild.categories
+                    if box_status == "active":
+                        for category in categories:
+                            if "box-active" in category.name.lower():
+                                await guild.create_text_channel(name=box_name, category=category)
+                                channels = guild.channels
+                                for channel in channels:
+                                    if channel.name == box_name:
+                                        await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
+                                        box = htbot.get_box(box_name, matrix=True)
+                                        await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
+                                        await channel.send("", file=box["file"], embed=box["embed"])
+                                        return True
+                    elif box_status == "retired":
+                        for category in categories:
+                            if "box-retired" in category.name.lower():
+                                await guild.create_text_channel(name=box_name, category=category)
+                                channels = guild.channels
+                                for channel in channels:
+                                    if channel.name == box_name:
+                                        await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
+                                        box = htbot.get_box(box_name)
+                                        await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
+                                        await channel.send("", embed=box)
+                                        return True
+
+        else:
+            await ctx.send("Cette box n'existe pas.")
+
+    else:
+        if str(ctx.channel.type) == "private":
+            await ctx.send("Tu n'as pas oublié quelque chose ?")
+        else:
+            box_name = ctx.channel.name.lower()
+            box_status = htbot.check_box(box_name)
+            if box_status:
+                await ctx.send("Bonne chance {} ! ❤".format(ctx.author.mention))
+            else:
+                await ctx.send("Tu n'as pas oublié quelque chose ?")
+
+@bot.command()
+async def test(ctx):
+    """test comme dhab"""
+    pass
 
 bot.run(cfg.discord['bot_token'])

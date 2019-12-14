@@ -3,7 +3,9 @@ import requests
 import re
 import json
 import discord
+from copy import deepcopy
 from scrapy.selector import Selector
+import plotly.graph_objects as go
 import config as cfg
 
 class HTBot():
@@ -21,7 +23,7 @@ class HTBot():
         self.regexs = {
             "box_pwn": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> owned (.*) on <a(?:.*)profile\/(?:\d+)\">(.*)<\/a> <a(?:.*)",
             "chall_pwn": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> solved challenge <(?:.*)>(.*)<(?:.*)><(?:.*)> from <(?:.*)>(.*)<(?:.*)><(?:.*)",
-            "new_box_incoming": "(?:.*)Get ready to spill some (?:.* blood .*! <.*>)(.*)<(?:.* available in <.*>)(.*)<(?:.*)",
+            "new_box_incoming": "(?:.*)Get ready to spill some (?:.* blood .*! <.*>)(.*)<(?:.* available in <.*>)(.*)<(?:.*)><(?:.*)",
             "new_box_out": "(?:.*)>(.*)<(?:.*) is mass-powering on! (?:.*)",
             "vip_upgrade": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> became a <(?:.*)><(?:.*)><(?:.*)> V.I.P <(?:.*)"
 
@@ -114,7 +116,7 @@ class HTBot():
 
         return False
 
-    def get_box(self, name="name", last=False):
+    def get_box(self, name="name", matrix=False, last=False):
         with open("boxs.txt", "r") as f:
             boxs = json.loads(f.read())
 
@@ -128,6 +130,22 @@ class HTBot():
                     break
             if not box:
                 return False
+
+        if matrix:
+            req = requests.get("https://www.hackthebox.eu/api/machines/get/matrix/" + str(box["id"]), params=self.payload, headers=self.headers)
+            if req.status_code == 200:
+                matrix_data = json.loads(req.text)
+
+            with open("resources/template_matrix.txt", "r") as f:
+                template = json.loads(f.read())
+
+            template["data"][0]["r"] = matrix_data["aggregate"]
+            template["data"][1]["r"] = matrix_data["maker"]
+
+            fig = go.Figure(template)
+
+            fig.write_image("resources/matrix.png")
+
 
         embed = discord.Embed(title=box["name"], color=0x9acc14)
         embed.set_thumbnail(url=box["avatar_thumb"])
@@ -160,12 +178,19 @@ class HTBot():
         embed.add_field(name="Status", value=status, inline=True)
         embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
         embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]), inline=True)
+
+        if matrix:
+            file = discord.File("resources/matrix.png", filename="matrix.png")
+            embed.set_image(url="attachment://matrix.png")
+        else:
+            file = ""
+
         if box["maker2"]:
             embed.set_footer(text="Makers : {} & {}".format(box["maker"]["name"], box["maker2"]["name"]), icon_url=box["avatar_thumb"])
         else:
             embed.set_footer(text="Maker : {}".format(box["maker"]["name"]), icon_url=box["avatar_thumb"])
 
-        return embed
+        return {"embed": embed, "file": file}
 
     def verify_user(self, discord_id, htb_acc_id):
         req = requests.get("https://www.hackthebox.eu/api/users/identifier/" + htb_acc_id, headers=self.headers)
@@ -224,9 +249,9 @@ class HTBot():
         except json.decoder.JSONDecodeError:
             return False
 
-    def extract_user_info(self, id):
+    def extract_user_info(self, htb_id):
         infos = {}
-        req = self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(id))
+        req = self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(htb_id))
 
         if req.status_code == 200:
             body = req.text
@@ -347,7 +372,8 @@ class HTBot():
 
         if req.status_code == 200:
             history = json.loads(req.text)["html"]
-            last_checked = self.last_checked
+            last_checked = deepcopy(self.last_checked)
+
             checked = []
             regexs = self.regexs
 
@@ -396,6 +422,8 @@ class HTBot():
 
                         for user in users:
                             if str(user["htb_id"]) == result[0]:
+                                print("chall pwn détecté !")
+                                print(result)
                                 self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
                                 self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
                                 self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
@@ -412,20 +440,23 @@ class HTBot():
                     if result and len(result[0]) == 2:
                         result = result[0]
 
-                        self.notif["new_box"]["content"]["box_name"] = result[0]
-                        self.notif["new_box"]["content"]["time"] = result[1]
-                        self.notif["new_box"]["content"]["incoming"] = True
-                        self.notif["new_box"]["state"] = True
+                        old_time = self.notif["new_box"]["content"]["time"]
+                        new_time = result[1]
 
-                        checked.append(msg)
-                        self.last_checked = (checked[::-1] + last_checked)[:20]
+                        if not old_time or (new_time.split(":")[0] == "15" and old_time.split(":")[0] != "15") or (new_time.split(":")[0] == "10" and old_time.split(":")[0] != "10") or (new_time.split(":")[0] == "05" and old_time.split(":")[0] != "05") or new_time.split(":")[0] == "01" or new_time.split(":")[0] == "00":
+                            self.notif["new_box"]["content"]["box_name"] = result[0]
+                            self.notif["new_box"]["content"]["time"] = result[1]
+                            self.notif["new_box"]["content"]["incoming"] = True
+                            self.notif["new_box"]["state"] = True
 
-                        return True
+                            checked.append(msg)
+                            self.last_checked = (checked[::-1] + last_checked)[:20]
+
+                            return True
 
                     #Check new box
                     result = re.compile(regexs["new_box_out"]).findall(msg)
-                    if result and len(result[0]) == 1:
-                        result = result[0]
+                    if type(result) is list and result and len(result) == 1:
 
                         self.notif["new_box"]["content"]["box_name"] = result[0]
                         self.notif["new_box"]["content"]["time"] = ""
@@ -437,12 +468,9 @@ class HTBot():
 
                         return True
 
-                    checked.append(msg)
-
                     #Check VIP upgrade
                     result = re.compile(regexs["vip_upgrade"]).findall(msg)
-                    if result and len(result[0]) == 1:
-                        result = result[0]
+                    if type(result) is list and result and len(result) == 1:
 
                         if path.exists("users.txt"):
                             with open("users.txt", "r") as f:
@@ -461,7 +489,10 @@ class HTBot():
                                 self.refresh_user(int(result[0])) #On met à jour les infos du user
                                 return True
 
+                    checked.append(msg)
+
             self.last_checked = (checked[::-1] + last_checked)[:20]
+
 
     def list_boxs(self, type=""):
         if path.exists("boxs.txt"):
@@ -519,3 +550,18 @@ class HTBot():
                 embed.add_field(name=diff.capitalize(), value=difficulty[diff]["output"], inline=False)
 
         return embed
+
+    def check_box(self, box_name):
+        """Check if a box exists and return its status"""
+        with open("boxs.txt", "r") as f:
+            boxs = json.loads(f.read())
+
+
+        for box in boxs:
+            if box["name"].lower() == box_name.lower():
+                if box["retired"]:
+                    return "retired"
+                else:
+                    return "active"
+
+        return False
