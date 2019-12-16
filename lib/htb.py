@@ -75,6 +75,29 @@ class HTBot():
                 }
             }
         }
+        if path.exists("users.txt"):
+            with open("users.txt", "r") as f:
+                self.users = json.loads(f.read())
+        else:
+            self.users = []
+
+        if path.exists("boxs.txt"):
+            with open("boxs.txt", "r") as f:
+                self.boxs = json.loads(f.read())
+        else:
+            self.boxs = []
+
+
+    def write_users(self, users):
+        self.users = users
+        with open("users.txt", "w") as f:
+            f.write(json.dumps(users))
+
+
+    def write_boxs(self, boxs):
+        self.boxs = boxs
+        with open("boxs.txt", "w") as f:
+            f.write(json.dumps(boxs))
 
 
     def login(self):
@@ -102,23 +125,23 @@ class HTBot():
         print("Connexion impossible.")
         return False
 
+
     def refresh_boxs(self):
         print("Rafraichissement des boxs...")
 
         req = requests.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
 
         if req.status_code == 200:
-            with open("boxs.txt", "w") as f:
-                f.write(req.text)
+            self.write_boxs(json.loads(req.text))
 
             print("La liste des boxs a été mise à jour !")
             return True
 
         return False
 
+
     def get_box(self, name="name", matrix=False, last=False):
-        with open("boxs.txt", "r") as f:
-            boxs = json.loads(f.read())
+        boxs = self.boxs
 
         box = ""
         if last:
@@ -192,15 +215,12 @@ class HTBot():
 
         return {"embed": embed, "file": file}
 
+
     def verify_user(self, discord_id, htb_acc_id):
         req = requests.get("https://www.hackthebox.eu/api/users/identifier/" + htb_acc_id, headers=self.headers)
 
         if req.status_code == 200:
-            if path.exists("users.txt"):
-                with open("users.txt", "r") as f:
-                    users = json.loads(f.read())
-            else:
-                users = []
+            users = self.users
 
             user_info = json.loads(req.text)
 
@@ -213,8 +233,7 @@ class HTBot():
                 "htb_id": user_info["user_id"],
             })
 
-            with open("users.txt", "w") as f:
-                f.write(json.dumps(users))
+            self.write_users(users)
 
             self.refresh_user(user_info["user_id"], new=True) #On scrape son profil
 
@@ -222,17 +241,15 @@ class HTBot():
         else:
             return "wrong_id"
 
+
     def discord_to_htb_id(self, discord_id):
-        if path.exists("users.txt"):
-            with open("users.txt", "r") as f:
-                users = json.loads(f.read())
-        else:
-            users = []
+        users = self.users
 
         for user in users:
             if user["discord_id"] == discord_id:
                 return user["htb_id"]
         return False
+
 
     def htb_id_by_name(self, name):
 
@@ -248,6 +265,7 @@ class HTBot():
             return user["id"]
         except json.decoder.JSONDecodeError:
             return False
+
 
     def extract_user_info(self, htb_id):
         infos = {}
@@ -273,8 +291,9 @@ class HTBot():
 
         return False
 
-    def get_user(self, id):
-        infos = self.extract_user_info(id)
+
+    def get_user(self, htb_id):
+        infos = self.extract_user_info(htb_id)
 
         embed = discord.Embed(title=infos["username"], color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
         embed.set_thumbnail(url=infos["avatar"])
@@ -282,17 +301,14 @@ class HTBot():
 
         return embed
 
-    def refresh_user(self, id, new=False):
-        if path.exists("users.txt"):
-            with open("users.txt", "r") as f:
-                users = json.loads(f.read())
-        else:
-            users = []
+
+    def refresh_user(self, htb_id, new=False):
+        users = self.users
 
         count = 0
         for user in users:
-            if user["htb_id"] == id:
-                infos = self.extract_user_info(id)
+            if user["htb_id"] == htb_id:
+                infos = self.extract_user_info(htb_id)
 
                 try:
                     users[count]["username"]
@@ -310,6 +326,7 @@ class HTBot():
                 if new:
                     print("New user détecté !")
                     self.notif["new_user"]["content"]["discord_id"] = users[count]["discord_id"]
+                    self.notif["new_user"]["content"]["htb_id"] = users[count]["htb_id"]
                     self.notif["new_user"]["content"]["level"] = infos["level"]
                     self.notif["new_user"]["state"] = True
                 else:
@@ -324,20 +341,18 @@ class HTBot():
                 users[count]["challs"] = infos["challs"]
                 users[count]["ownership"] = infos["ownership"]
             count += 1
-        with open("users.txt", "w") as f:
-            f.write(json.dumps(users))
+
+        self.write_users(users)
+
 
     def refresh_all_users(self):
-        print("Rafraichissement des users...")
-        if path.exists("users.txt"):
-            with open("users.txt", "r") as f:
-                users = json.loads(f.read())
-        else:
-            users = []
+        users = self.users
 
         for user in users:
             self.refresh_user(user["htb_id"])
+
         print("Les users ont été mis à jour !")
+
 
     def leaderboard(self):
         if path.exists("users.txt"):
@@ -366,6 +381,7 @@ class HTBot():
         embed = discord.Embed(title="🏆 Leaderboard 🏆 | {}".format(cfg.discord["guild_name"]), color=0x9acc14, description=text)
 
         return embed
+
 
     def shoutbox(self):
         req = self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
@@ -495,9 +511,7 @@ class HTBot():
 
 
     def list_boxs(self, type=""):
-        if path.exists("boxs.txt"):
-            with open("boxs.txt", "r") as f:
-                boxs = json.loads(f.read())
+        boxs = self.boxs
 
         difficulty = {
             "easy": {
@@ -551,11 +565,10 @@ class HTBot():
 
         return embed
 
+
     def check_box(self, box_name):
         """Check if a box exists and return its status"""
-        with open("boxs.txt", "r") as f:
-            boxs = json.loads(f.read())
-
+        boxs = self.boxs
 
         for box in boxs:
             if box["name"].lower() == box_name.lower():

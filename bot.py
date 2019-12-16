@@ -34,7 +34,6 @@ class tasksCog(commands.Cog):
     @tasks.loop(seconds=3.0) #Toutes les 3 secondes, check les notifications
     async def check_notif(self):
         notif = htbot.notif
-        #print(notif)
         if notif["update_role"]["state"]:
             content = notif["update_role"]["content"]
             await update_role(content["discord_id"], content["prev_rank"], content["new_rank"])
@@ -48,6 +47,8 @@ class tasksCog(commands.Cog):
                 if guild.name == cfg.discord['guild_name']:
                     member = guild.get_member(content["discord_id"])
             await shoutbox.send("👋 Bienvenue {} ! Heureux de t'avoir parmis nous.\nTu es arrivé avec le rang {} !".format(member.mention, content["level"]))
+            embed = htbot.get_user(content["htb_id"])
+            await shoutbox.send(embed=embed)
             htbot.notif["new_role"]["state"] = False
 
         elif notif["box_pwn"]["state"]:
@@ -94,19 +95,19 @@ class tasksCog(commands.Cog):
 
     @tasks.loop(seconds=5.0) #Toutes les 5 secondes
     async def refresh_shoutbox(self):
-        await htbot.shoutbox()
+        htbot.shoutbox()
 
     @tasks.loop(seconds=1800.0) #Toutes les 30 minutes
     async def htb_login(self):
-        await htbot.login()
+        htbot.login()
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def refresh_boxs(self):
-        await htbot.refresh_boxs()
+        htbot.refresh_boxs()
 
     @tasks.loop(seconds=600.0) #Toutes les 10 minutes
     async def refresh_all_users(self):
-        await htbot.refresh_all_users()
+        htbot.refresh_all_users()
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def manage_channels(self):
