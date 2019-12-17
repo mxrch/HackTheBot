@@ -29,7 +29,7 @@ class tasksCog(commands.Cog):
         self.refresh_boxs.start()
         self.manage_channels.start()
         self.refresh_all_users.start()
-        #self.refresh_shoutbox.start()
+        self.refresh_shoutbox.start()
 
     @tasks.loop(seconds=3.0) #Toutes les 3 secondes, check les notifications
     async def check_notif(self):
@@ -196,11 +196,14 @@ async def verify(ctx, content=""):
 @bot.command()
 async def get_box(ctx, name="", matrix=""):
     """Get info on a box"""
+    if not matrix and name == "+matrix":
+        name = ""
+        matrix = "+matrix"
+
     if name:
         tasks = bot.get_cog('tasksCog')
-        tasks.refresh_boxs.stop()
         if matrix:
-            if matrix.lower() == "matrix":
+            if matrix.lower() == "+matrix":
                 box = htbot.get_box(name, matrix=True)
             else:
                 await ctx.send("Paramètres incorrectes.")
@@ -215,12 +218,22 @@ async def get_box(ctx, name="", matrix=""):
                 await ctx.send("", embed=box["embed"])
         else:
             await ctx.send("Cette box n'existe pas.")
-        try:
-            tasks.refresh_boxs.start()
-        except RuntimeError:
-            pass
+
     else:
-        await ctx.send("Tu n'as pas précisé la box.")
+        if str(ctx.channel.type) == "private":
+            await ctx.send("Tu n'as pas oublié quelque chose ?")
+        else:
+            box_name = ctx.channel.name.lower()
+            box_status = htbot.check_box(box_name)
+            if box_status:
+                if matrix:
+                    box = htbot.get_box(box_name, matrix=True)
+                    await ctx.send("", file=box["file"], embed=box["embed"])
+                else:
+                    box = htbot.get_box(box_name)
+                    await ctx.send("", embed=box["embed"])
+            else:
+                await ctx.send("Tu n'as pas précisé la box.")
 
 @bot.command()
 async def last_box(ctx, matrix=""):
@@ -375,9 +388,9 @@ async def work_on(ctx, box_name=""):
                                 for channel in channels:
                                     if channel.name == box_name:
                                         await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
-                                        box = htbot.get_box(box_name)
+                                        box = htbot.get_box(box_name, matrix=True)
                                         await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
-                                        await channel.send("", embed=box)
+                                        await channel.send("", file=box["file"], embed=box["embed"])
                                         return True
 
         else:

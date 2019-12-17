@@ -7,3 +7,4 @@ body.txt
 __pycache__/
 lib/__pycache__/
 resources/__pycache__/
+resources/matrix.png

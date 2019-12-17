@@ -384,13 +384,52 @@ class HTBot():
 
 
     def shoutbox(self):
+
+        def update_last_checked(msg, checked, last_checked):
+            checked.append(msg)
+            self.last_checked = deepcopy((checked[::-1] + last_checked)[:20])
+
+        def notif_box_pwn(result, user):
+            self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
+
+            if result[1] == "system":
+                self.notif["box_pwn"]["content"]["pwn"] = "root"
+            else:
+                self.notif["box_pwn"]["content"]["pwn"] = result[1]
+
+            self.notif["box_pwn"]["content"]["box_name"] = result[2]
+            self.notif["box_pwn"]["state"] = True
+
+        def notif_chall_pwn(result, user):
+            self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
+            self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
+            self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
+            self.notif["chall_pwn"]["state"] = True
+
+        def notif_box_incoming(result):
+            self.notif["new_box"]["content"]["box_name"] = result[0]
+            self.notif["new_box"]["content"]["time"] = result[1]
+            self.notif["new_box"]["content"]["incoming"] = True
+            self.notif["new_box"]["state"] = True
+
+        def notif_new_box(result):
+            self.notif["new_box"]["content"]["box_name"] = result[0]
+            self.notif["new_box"]["content"]["time"] = ""
+            self.notif["new_box"]["content"]["incoming"] = False
+            self.notif["new_box"]["state"] = True
+
+        def notif_vip_upgrade(user):
+            self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
+            self.notif["vip_upgrade"]["state"] = True
+
         req = self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
 
         if req.status_code == 200:
-            history = json.loads(req.text)["html"]
+            history = deepcopy(json.loads(req.text)["html"])
             last_checked = deepcopy(self.last_checked)
+            users = deepcopy(self.users)
 
-            checked = []
+            checked = deepcopy([])
             regexs = self.regexs
 
             for msg in history:
@@ -400,114 +439,60 @@ class HTBot():
                     result = re.compile(regexs["box_pwn"]).findall(msg)
                     if result and len(result[0]) == 3:
                         result = result[0]
-
-                        if path.exists("users.txt"):
-                            with open("users.txt", "r") as f:
-                                users = json.loads(f.read())
-                        else:
-                            users = []
-
                         for user in users:
                             if str(user["htb_id"]) == result[0]:
-                                self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
-
-                                if result[1] == "system":
-                                    self.notif["box_pwn"]["content"]["pwn"] = "root"
-                                else:
-                                    self.notif["box_pwn"]["content"]["pwn"] = result[1]
-
-                                self.notif["box_pwn"]["content"]["box_name"] = result[2]
-                                self.notif["box_pwn"]["state"] = True
-
-                                checked.append(msg)
-                                self.last_checked = (checked[::-1] + last_checked)[:20]
-
+                                notif_box_pwn(result, user)
+                                update_last_checked(msg, checked, last_checked)
                                 self.refresh_user(int(result[0])) #On met à jour les infos du user
+
                                 return True
 
                     #Check les challenges pwns
                     result = re.compile(regexs["chall_pwn"]).findall(msg)
                     if result and len(result[0]) == 3:
                         result = result[0]
-
-                        if path.exists("users.txt"):
-                            with open("users.txt", "r") as f:
-                                users = json.loads(f.read())
-                        else:
-                            users = []
-
                         for user in users:
                             if str(user["htb_id"]) == result[0]:
-                                print("chall pwn détecté !")
-                                print(result)
-                                self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
-                                self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
-                                self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
-                                self.notif["chall_pwn"]["state"] = True
-
-                                checked.append(msg)
-                                self.last_checked = (checked[::-1] + last_checked)[:20]
-
+                                notif_chall_pwn(result, user)
+                                update_last_checked(msg, checked, last_checked)
                                 self.refresh_user(int(result[0])) #On met à jour les infos du user
+
                                 return True
 
                     #Check box incoming
                     result = re.compile(regexs["new_box_incoming"]).findall(msg)
                     if result and len(result[0]) == 2:
                         result = result[0]
-
                         old_time = self.notif["new_box"]["content"]["time"]
                         new_time = result[1]
-
                         if not old_time or (new_time.split(":")[0] == "15" and old_time.split(":")[0] != "15") or (new_time.split(":")[0] == "10" and old_time.split(":")[0] != "10") or (new_time.split(":")[0] == "05" and old_time.split(":")[0] != "05") or new_time.split(":")[0] == "01" or new_time.split(":")[0] == "00":
-                            self.notif["new_box"]["content"]["box_name"] = result[0]
-                            self.notif["new_box"]["content"]["time"] = result[1]
-                            self.notif["new_box"]["content"]["incoming"] = True
-                            self.notif["new_box"]["state"] = True
-
-                            checked.append(msg)
-                            self.last_checked = (checked[::-1] + last_checked)[:20]
+                            notif_box_incoming(result)
+                            update_last_checked(msg, checked, last_checked)
 
                             return True
 
                     #Check new box
                     result = re.compile(regexs["new_box_out"]).findall(msg)
                     if type(result) is list and result and len(result) == 1:
-
-                        self.notif["new_box"]["content"]["box_name"] = result[0]
-                        self.notif["new_box"]["content"]["time"] = ""
-                        self.notif["new_box"]["content"]["incoming"] = False
-                        self.notif["new_box"]["state"] = True
-
-                        checked.append(msg)
-                        self.last_checked = (checked[::-1] + last_checked)[:20]
+                        notif_new_box(result)
+                        update_last_checked(msg, checked, last_checked)
 
                         return True
 
                     #Check VIP upgrade
                     result = re.compile(regexs["vip_upgrade"]).findall(msg)
                     if type(result) is list and result and len(result) == 1:
-
-                        if path.exists("users.txt"):
-                            with open("users.txt", "r") as f:
-                                users = json.loads(f.read())
-                        else:
-                            users = []
-
                         for user in users:
                             if str(user["htb_id"]) == result[0]:
-                                self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
-                                self.notif["vip_upgrade"]["state"] = True
-
-                                checked.append(msg)
-                                self.last_checked = (checked[::-1] + last_checked)[:20]
-
+                                notif_vip_upgrade(user)
+                                update_last_checked(msg, checked, last_checked)
                                 self.refresh_user(int(result[0])) #On met à jour les infos du user
+
                                 return True
 
                     checked.append(msg)
 
-            self.last_checked = (checked[::-1] + last_checked)[:20]
+            self.last_checked = deepcopy((checked[::-1] + last_checked)[:20])
 
 
     def list_boxs(self, type=""):
