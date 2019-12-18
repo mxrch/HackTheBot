@@ -132,8 +132,35 @@ class HTBot():
         req = requests.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
 
         if req.status_code == 200:
-            self.write_boxs(json.loads(req.text))
+            new_boxs = json.loads(req.text)
+            old_boxs = self.boxs
+            old_boxs_ids = [d['id'] for d in old_boxs]
+            boxs = []
 
+            for box in new_boxs:
+                #If there is a new box
+                if box["id"] not in old_boxs_ids:
+                    old_boxs.append(box)
+
+            for o_box, n_box in zip(old_boxs, new_boxs):
+                o_box["name"] = n_box["name"]
+                o_box["avatar_thumb"] = n_box["avatar_thumb"]
+                o_box["ip"] = n_box["ip"]
+                o_box["os"] = n_box["os"]
+                o_box["points"] = n_box["points"]
+                o_box["rating"] = n_box["rating"]
+                o_box["retired"] = n_box["retired"]
+                o_box["retired_date"] = n_box["retired_date"]
+                o_box["user_owns"] = n_box["user_owns"]
+                o_box["root_owns"] = n_box["root_owns"]
+                o_box["release"] = n_box["release"]
+                o_box["maker"] = n_box["maker"]
+                o_box["maker2"] = n_box["maker2"]
+                o_box["free"] = n_box["free"]
+
+                boxs.append(o_box)
+
+            self.write_boxs(boxs)
             print("La liste des boxs a été mise à jour !")
             return True
 

@@ -221,7 +221,7 @@ async def get_box(ctx, name="", matrix=""):
 
     else:
         if str(ctx.channel.type) == "private":
-            await ctx.send("Tu n'as pas oublié quelque chose ?")
+            await ctx.send("Tu n'as pas précisé la box.")
         else:
             box_name = ctx.channel.name.lower()
             box_status = htbot.check_box(box_name)
