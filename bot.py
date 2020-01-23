@@ -8,6 +8,7 @@ bot = commands.Bot(command_prefix='>', description=description)
 
 htbot = HTBot(cfg.HTB['email'], cfg.HTB['password'], cfg.HTB['api_token'])
 
+
 #Start
 
 @bot.event
@@ -17,7 +18,10 @@ async def on_ready():
     print(bot.user.id)
     print('------')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=">help"))
-    bot.add_cog(tasksCog(bot))
+    try:
+        bot.add_cog(tasksCog(bot))
+    except:
+        pass
 
 #Tasks
 
@@ -78,7 +82,7 @@ class tasksCog(commands.Cog):
                 await shoutbox.send("⏱️ La box {} arrive dans {} ! ⏱️".format(content["box_name"], content["time"]))
             else:
                 await shoutbox.send("@everyone 🚨 La nouvelle box {} est en ligne ! 🚨\nAurez-vous le first blood ? 🩸".format(content["box_name"]))
-                box = htbot.get_box(content["box_name"], matrix=True)
+                box = htbot.get_box(content["box_name"])
                 await shoutbox.send("", file=box["file"], embed=box["embed"])
             htbot.notif["new_box"]["state"] = False
 
@@ -196,14 +200,14 @@ async def verify(ctx, content=""):
 @bot.command()
 async def get_box(ctx, name="", matrix=""):
     """Get info on a box"""
-    if not matrix and name == "+matrix":
+    if not matrix and name == "-matrix":
         name = ""
-        matrix = "+matrix"
+        matrix = "-matrix"
 
     if name:
         tasks = bot.get_cog('tasksCog')
         if matrix:
-            if matrix.lower() == "+matrix":
+            if matrix.lower() == "-matrix":
                 box = htbot.get_box(name, matrix=True)
             else:
                 await ctx.send("Paramètres incorrectes.")
@@ -239,9 +243,8 @@ async def get_box(ctx, name="", matrix=""):
 async def last_box(ctx, matrix=""):
     """Get info on the newest box"""
     tasks = bot.get_cog('tasksCog')
-    tasks.refresh_boxs.stop()
     if matrix:
-        if matrix.lower() == "matrix":
+        if matrix.lower() == "-matrix":
             box = htbot.get_box(matrix=True, last=True)
         else:
             await ctx.send("Paramètres incorrectes.")
@@ -253,10 +256,6 @@ async def last_box(ctx, matrix=""):
         await ctx.send("", file=box["file"], embed=box["embed"])
     else:
         await ctx.send("", embed=box["embed"])
-    try:
-        tasks.refresh_boxs.start()
-    except RuntimeError:
-        pass
 
 @bot.command()
 async def get_user(ctx, name=""):
@@ -329,24 +328,15 @@ async def list_boxs(ctx, type=""):
     if type:
         if type in ["easy", "medium", "hard", "insane"]:
             tasks = bot.get_cog('tasksCog')
-            tasks.refresh_boxs.stop()
             embed = htbot.list_boxs(type)
             await ctx.send("", embed=embed)
-            try:
-                tasks.refresh_boxs.start()
-            except RuntimeError:
-                pass
+
         else:
             await ctx.send("Difficulté inconnue.")
     else:
         tasks = bot.get_cog('tasksCog')
-        tasks.refresh_boxs.stop()
         embed = htbot.list_boxs()
         await ctx.send("", embed=embed)
-        try:
-            tasks.refresh_boxs.start()
-        except RuntimeError:
-            pass
 
 @bot.command()
 async def work_on(ctx, box_name=""):
@@ -408,8 +398,329 @@ async def work_on(ctx, box_name=""):
                 await ctx.send("Tu n'as pas oublié quelque chose ?")
 
 @bot.command()
-async def test(ctx):
-    """test comme dhab"""
-    pass
+async def account(ctx, arg, action=""):
+    """Manage your HTB account on the Discord server"""
+
+@bot.command()
+async def writeup(ctx, *, content=""):
+    """Download box writeups"""
+
+    async def fetch_writeup(ctx, box_name=""):
+        msg = await ctx.send("Téléchargement du writeup...")
+        wp = htbot.writeup(box_name)
+        await msg.edit(content="Upload du writeup...")
+        if wp:
+            await ctx.send("{} Voici le writeup de {} ! Bonne lecture 📖".format(ctx.author.mention, box_name.capitalize()), file=wp)
+            await msg.delete()
+        else:
+            await ctx.send("Erreur.")
+
+    async def fetch_writeup_links(ctx, box_name, page):
+        if page <= 0:
+            await ctx.send("Bien essayé.")
+            return False
+
+        msg = await ctx.send("🔍 Je cherche les writeups...")
+        links = htbot.writeup(box_name, links=True, page=page)
+        if links:
+            if links["status"] == "found":
+                await msg.delete()
+                await ctx.send(embed=links["embed"])
+            elif links["status"] == "too_high":
+                await ctx.send("Vous avez atteint la limite des pages disponibles.")
+            elif links["status"] == "empty":
+                await ctx.send("Aucun writeup de membre n'a été trouvé !")
+        else:
+            await ctx.send("Erreur.")
+
+    # Args parser
+    args = content.split()
+    count = 0
+    links = False
+    page = 1
+    box_name = ""
+    while count < len(args):
+        if args[count] == "-links":
+            links = True
+            count += 1
+            continue
+        elif args[count] == "-page":
+            try:
+                int(args[count + 1])
+            except ValueError:
+                await ctx.send("Erreur.")
+                return False
+            else:
+                page = int(args[count + 1])
+                count += 2
+                continue
+        else:
+            box_name = args[count]
+            count += 1
+            continue
+        break
+
+    if not links and page:
+        await ctx.send("Erreur.")
+        return False
+
+    if box_name:
+        check = htbot.check_box(box_name)
+        if check:
+            if check == "retired":
+                if links:
+                    await fetch_writeup_links(ctx, box_name, page=page)
+                else:
+                    await fetch_writeup(ctx, box_name)
+            elif check == "active":
+                await ctx.send("La box est encore active, bien essayé petit chenapan 😏")
+
+        else:
+            await ctx.send("🤔 Tu es sûr que le nom de la box est correcte ?")
+
+    else:
+        if str(ctx.channel.type) == "private":
+            await ctx.send("Tu n'as pas précisé la box.")
+        else:
+            box_name = ctx.channel.name.lower()
+            check = htbot.check_box(box_name)
+            if check == "retired":
+                if links:
+                    await fetch_writeup_links(ctx, box_name, page=page)
+                else:
+                    await fetch_writeup(ctx, box_name)
+            elif check == "active":
+                await ctx.send("La box est encore active, bien essayé petit chenapan 😏")
+
+            else:
+                await ctx.send("Tu n'as pas précisé la box.")
+
+@bot.command()
+async def ippsec(ctx, *, content=""):
+    """Search through Ippsec videos"""
+
+    async def search(ctx, content, page):
+        if page <= 0:
+            await ctx.send("Bien essayé.")
+            return False
+
+        results = htbot.ippsec(search=content, page=page)
+        if results["status"] == "found":
+            await ctx.send(embed=results["embed"])
+        elif results["status"] == "too_high":
+            await ctx.send("Vous avez atteint la limite des pages disponibles.")
+        elif results["status"] == "not_found":
+            await ctx.send("Aucun résultat !")
+
+    # Args parser
+    args = content.split()
+    count = 0
+    page = 1
+    query = []
+    search_flag = False
+
+    while count < len(args):
+        if args[count] == "-page":
+            try:
+                int(args[count + 1])
+            except ValueError:
+                await ctx.send("Erreur.")
+                return False
+            else:
+                page = int(args[count + 1])
+                count += 2
+                if search_flag:
+                    break
+                continue
+        else:
+            search_flag = True
+            query.append(args[count])
+            count += 1
+
+    query = " ".join(query)
+    await search(ctx, query, page=page)
+
+@bot.command()
+async def man(ctx, command=""):
+    """Here is the fucking manual"""
+
+    if command == "man" or not command:
+        embed = discord.Embed(color=0x9acc14, title="📖  >man", description="""
+        ***voir comment une commande fonctionne***
+
+        **ARGS**
+        {command} | *la commande sur laquelle tu veux avoir des informations*
+
+        **EXAMPLES**
+        >man account
+        >man get_box
+        """)
+
+    elif command == "account":
+        embed = discord.Embed(color=0x9acc14, title="📖  >account", description="""
+        ***gère la synchronisation Hack The Box***
+
+        **PARAMS**
+        -mention on/off | *si le bot te mentionne dans la shoutbox ou non*
+        -private on/off | *si le bot envoie une notif de ton pwn dans la shoutbox ou non*
+        -forget confirm | *si tu veux arrêter la synchro Discord / HTB*
+        -verify | *commencer à synchroniser ton compte HTB avec le serveur*
+
+        **EXAMPLES**
+        >account -mention off
+        >account -forget confirm
+        """)
+
+    elif command == "get_box":
+        embed = discord.Embed(color=0x9acc14, title="📖  >get_box", description="""
+        ***récupère les informations sur une box***
+
+        **ARGS**
+        {box_name} | *le nom de la box*
+
+        **PARAMS**
+        -matrix | *plus long, mais envoie la matrix avec*
+
+        **EXAMPLES**
+        >get_box forest
+        >get_box registry -matrix
+        """)
+
+    elif command == "last_box":
+        embed = discord.Embed(color=0x9acc14, title="📖  >last_box", description="""
+        ***récupère les informations de la dernière box***
+
+        **PARAMS**
+        -matrix | *plus long, mais envoie la matrix avec*
+
+        **EXAMPLES**
+        >last_box
+        >last_box -matrix
+        """)
+
+    elif command == "me":
+        embed = discord.Embed(color=0x9acc14, title="📖  >me", description="""
+        ***affiche tes infos HTB***
+
+        **EXAMPLES**
+        >me
+        """)
+
+    elif command == "get_user":
+        embed = discord.Embed(color=0x9acc14, title="📖  >get_user", description="""
+        ***affiche les infos d'un membre HTB***
+
+        **ARGS**
+        {user} | *le nom du membre*
+
+        **EXAMPLES**
+        >get_user mxrch
+        """)
+
+    elif command == "leaderboard":
+        embed = discord.Embed(color=0x9acc14, title="📖  >leaderboard", description="""
+        ***envoie le classement des membres du serveur***
+
+        **EXAMPLES**
+        >leaderboard
+        """)
+
+    elif command == "list_boxs":
+        embed = discord.Embed(color=0x9acc14, title="📖  >list_boxs", description="""
+        ***liste les boxs actives par difficulté ou non***
+
+        **ARGS**
+        easy/medium/hard/insane | *la difficulté*
+
+        **EXAMPLES**
+        >list_boxs
+        >list_boxs hard
+        """)
+
+    elif command == "hello":
+        embed = discord.Embed(color=0x9acc14, title="📖  >hello", description="""
+        ***affiche Hello World !***
+
+        **EXAMPLES**
+        >hello
+        """)
+
+    elif command == "echo":
+        embed = discord.Embed(color=0x9acc14, title="📖  >echo", description="""
+        ***fait le perroquet***
+
+        **ARGS**
+        {text} | *texte à répéter*
+
+        **EXAMPLES**
+        >echo 123
+        >echo hello world
+        """)
+
+    elif command == "ping":
+        embed = discord.Embed(color=0x9acc14, title="📖  >ping", description="""
+        ***calcule le temps de réponse du bot***
+
+        **EXAMPLES**
+        >ping
+        """)
+
+    elif command == "writeup":
+        embed = discord.Embed(color=0x9acc14, title="📖  >writeup", description="""
+        ***envoie le ou les writeups d'une box***
+
+        **ARGS**
+        {box_name} | *le nom de la box*
+
+        **PARAMS**
+        -links | *envoie les writeups publiés par les membres plutôt que l'officiel*
+        -page {page} | *la page de la liste des writeups*
+
+        **EXAMPLES**
+        >writeup hackback
+        >writeup heist -links -page 4
+        """)
+
+    elif command == "help":
+        embed = discord.Embed(color=0x9acc14, title="📖  >help", description="""
+        ***liste toutes les commandes avec leur description***
+
+        **EXAMPLES**
+        >help
+        """)
+
+    elif command == "work_on":
+        embed = discord.Embed(color=0x9acc14, title="📖  >work_on", description="""
+        ***annonce que vous commencez une box, et créé le channel dédié s'il n'existe pas encore***
+
+        **ARGS**
+        {box_name} | *le nom de la box*
+
+        **EXAMPLES**
+        >work_on
+        >work_on monteverde
+        """)
+
+    elif command == "ippsec":
+        embed = discord.Embed(color=0x9acc14, title="📖  >ippsec", description="""
+        ***cherche des mots-clés dans les vidéos d'Ippsec***
+
+        **ARGS**
+        {query} | *la recherche*
+
+        **PARAMS**
+        -page {page} | *la page des résultats*
+
+        **EXAMPLES**
+        >ippsec gobuster
+        >ippsec bitlab -page 4
+        >ippsec -page 2 active directory
+        """)
+
+    else:
+        await ctx.send("🤔 Je ne connais pas cette commande !")
+        return False
+
+    await ctx.send(embed=embed)
 
 bot.run(cfg.discord['bot_token'])

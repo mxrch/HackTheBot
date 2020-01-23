@@ -2,6 +2,7 @@ from os import path
 import requests
 import re
 import json
+import time
 import discord
 from copy import deepcopy
 from scrapy.selector import Selector
@@ -25,7 +26,8 @@ class HTBot():
             "chall_pwn": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> solved challenge <(?:.*)>(.*)<(?:.*)><(?:.*)> from <(?:.*)>(.*)<(?:.*)><(?:.*)",
             "new_box_incoming": "(?:.*)Get ready to spill some (?:.* blood .*! <.*>)(.*)<(?:.* available in <.*>)(.*)<(?:.*)><(?:.*)",
             "new_box_out": "(?:.*)>(.*)<(?:.*) is mass-powering on! (?:.*)",
-            "vip_upgrade": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> became a <(?:.*)><(?:.*)><(?:.*)> V.I.P <(?:.*)"
+            "vip_upgrade": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> became a <(?:.*)><(?:.*)><(?:.*)> V.I.P <(?:.*)",
+            "writeup_links" : "Submitted By: <a href=(?:.*?)>(.*?)<(?:.*?)Url: (?:.*?)href=\"(.*?)\""
 
         }
         self.notif = {
@@ -129,7 +131,7 @@ class HTBot():
     def refresh_boxs(self):
         print("Rafraichissement des boxs...")
 
-        req = requests.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
+        req = self.session.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
 
         if req.status_code == 200:
             new_boxs = json.loads(req.text)
@@ -296,7 +298,7 @@ class HTBot():
 
     def extract_user_info(self, htb_id):
         infos = {}
-        req = self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(htb_id))
+        req = self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(htb_id), headers=self.headers)
 
         if req.status_code == 200:
             body = req.text
@@ -414,7 +416,7 @@ class HTBot():
 
         def update_last_checked(msg, checked, last_checked):
             checked.append(msg)
-            self.last_checked = deepcopy((checked[::-1] + last_checked)[:20])
+            self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
 
         def notif_box_pwn(result, user):
             self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
@@ -519,7 +521,7 @@ class HTBot():
 
                     checked.append(msg)
 
-            self.last_checked = deepcopy((checked[::-1] + last_checked)[:20])
+            self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
 
 
     def list_boxs(self, type=""):
@@ -590,3 +592,119 @@ class HTBot():
                     return "active"
 
         return False
+
+    def account(self, discord_id, delete=False, shoutbox_onoff=False):
+        users = self.users
+        if action:
+            if action.lower() == "-delete":
+                for user in users:
+                    if user["discord_id"] == discord_id:
+                        users.pop(user)
+                        self.write_users(users)
+
+                        return "success"
+
+            elif action.lower() == "-shoutbox":
+                pass
+            else:
+                return "wrong_arg"
+
+    def writeup(self, box_name, links=False, page=1):
+        boxs = self.boxs
+        regexs = self.regexs
+
+        for box in boxs:
+            if box["name"].lower() == box_name.lower():
+                if links:
+                    req = self.session.get("https://www.hackthebox.eu/home/machines/profile/" + str(box["id"]), headers=self.headers)
+
+                    if req.status_code == 200:
+                        body = req.text
+                        html = Selector(text=body)
+
+                        wpsection = html.css('div.panel.panel-filled').getall()[-1]
+                        result = re.compile(regexs["writeup_links"]).findall(wpsection)
+
+                        #If there are writeup links
+                        if result and len(result[0]) == 2:
+                            nb = len(result)
+                            limit = 5 # Pagination
+                            if nb/limit - nb//limit == 0.0:
+                                total = nb//limit
+                            else:
+                                total = nb//limit + 1
+                            if page > total:
+                                return {"status": "too_high"}
+
+                            else:
+                                writeups = result[(limit*page-limit):(limit*page)]
+
+                                text = ""
+                                for wp in writeups:
+                                    text += "**Auteur : {}**\n**Lien :** {}\n\n".format(wp[0], wp[1])
+
+                                embed = discord.Embed(title="📚 Writeups submitted | {}".format(box["name"].capitalize()), color=0x9acc14, description=text)
+                                embed.set_footer(text="📖 Page : {} / {}".format(page, total))
+
+                                return {"status" : "found", "embed": embed}
+
+                        else:
+                            return {"status": "empty"}
+
+                    return False
+
+                else:
+                    req = self.session.get("https://www.hackthebox.eu/home/machines/writeup/" + str(box["id"]), headers=self.headers)
+
+                    if req.status_code == 200:
+                        pathname = 'resources/writeups/' + box["name"].lower() + '.pdf'
+                        if not path.exists(pathname):
+                            open(pathname, 'wb').write(req.content)
+
+                        file = discord.File(pathname, filename=box["name"].lower() + '.pdf')
+                        return file
+
+                    return False
+
+
+    def ippsec(self, search, page):
+        f = open('resources/ippsec.txt', 'r')
+        db = json.loads(f.read())
+
+        results = []
+
+        for step in db:
+            if all(s in (step["machine"] + step["line"]).lower() for s in search.lower().split()):
+
+                seconds = step["timestamp"]["minutes"] * 60 + step["timestamp"]["seconds"]
+                results.append({"title": step["machine"].strip(),
+                                "description": step["line"].strip(),
+                                "url": "https://youtube.com/watch?v={}&t={}".format(step["videoId"], seconds),
+                                "timestamp": time.strftime("%H:%M:%S", time.gmtime(seconds))})
+
+        if len(search) > 22:
+            search = search[:22] + "..."
+
+        if results:
+            nb = len(results)
+            limit = 6 # Pagination
+            if nb/limit - nb//limit == 0.0:
+                total = nb//limit
+            else:
+                total = nb//limit + 1
+            if page > total:
+                return {"status": "too_high"}
+
+            else:
+                results = results[(limit*page-limit):(limit*page)]
+        else:
+            return {"status": "not_found"}
+
+        text = ""
+        for a in results:
+            text += "**{}** *({})*\n{}\n{}\n\n".format(a["title"], a["timestamp"], a["description"], a["url"])
+
+        embed = discord.Embed(title="📚  Ippsec search | {}".format(search.capitalize()), color=0x9acc14, description=text)
+        embed.set_footer(text="📖 Page : {} / {}".format(page, total))
+
+        return {"status": "found", "embed": embed}
