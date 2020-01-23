@@ -437,7 +437,7 @@ async def writeup(ctx, *, content=""):
     args = content.split()
     count = 0
     links = False
-    page = 1
+    page = None
     box_name = ""
     while count < len(args):
         if args[count] == "-links":
@@ -447,7 +447,7 @@ async def writeup(ctx, *, content=""):
         elif args[count] == "-page":
             try:
                 int(args[count + 1])
-            except ValueError:
+            except (ValueError, IndexError):
                 await ctx.send("Erreur.")
                 return False
             else:
@@ -460,9 +460,11 @@ async def writeup(ctx, *, content=""):
             continue
         break
 
-    if not links and page:
+    if page and not links:
         await ctx.send("Erreur.")
         return False
+    elif links and not page:
+        page = 1
 
     if box_name:
         check = htbot.check_box(box_name)
@@ -523,7 +525,7 @@ async def ippsec(ctx, *, content=""):
         if args[count] == "-page":
             try:
                 int(args[count + 1])
-            except ValueError:
+            except (ValueError, IndexError):
                 await ctx.send("Erreur.")
                 return False
             else:
