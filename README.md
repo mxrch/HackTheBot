@@ -8,7 +8,7 @@ In the meantime, here are some features it can already do:
 Commands :
 - Synchronize your Hack The Box account with the Discord server
 - Retrieve information about a box (with the matrix)
-- Retrieve information about a Hack THe Box member
+- Retrieve information about a Hack The Box member
 - Search for items among Ippsec videos
 - Retrieve information on the last box released
 - View the leaderboard of Discord server members
@@ -89,4 +89,4 @@ Here are some screens (in french) to tease the bot :
 ![](https://files.catbox.moe/5qm6ut.PNG)
 
 
-If you have question or just want to contact me on Discord : mxrch#8507 ❤
+If you have question or just want to contact me on Discord : **mxrch#8507** ❤
