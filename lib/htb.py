@@ -1,13 +1,15 @@
 from os import path
-import requests
+import httpx
+import trio
 import re
 import json
-import time
+from time import localtime, gmtime, strftime
 import discord
 from copy import deepcopy
 from scrapy.selector import Selector
 import plotly.graph_objects as go
 import config as cfg
+import pdb
 
 class HTBot():
     def __init__(self, email, password, api_token=""):
@@ -15,10 +17,15 @@ class HTBot():
         self.password = password
         self.api_token = api_token
 
-        self.session = requests.Session()
         self.headers = {
             "user-agent": "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/40.0.2214.85 Safari/537.36"
         }
+        self.session = httpx.AsyncClient(headers=self.headers, timeout=360.0)
+        self.locks = {
+                "notif": trio.Lock(),
+                "write_user": trio.Lock()
+                }
+
         self.payload = {'api_token': self.api_token}
         self.last_checked = []
         self.regexs = {
@@ -103,172 +110,182 @@ class HTBot():
 
 
     def login(self):
-        req = self.session.get("https://www.hackthebox.eu/login", headers=self.headers)
+        async def _login():
+            req = await self.session.get("https://www.hackthebox.eu/login")
 
-        html = req.text
-        csrf_token = re.findall(r'type="hidden" name="_token" value="(.+?)"', html)
+            html = req.text
+            csrf_token = re.findall(r'type="hidden" name="_token" value="(.+?)"', html)
 
-        if not csrf_token:
+            if not csrf_token:
+                return False
+
+            data = {
+                "_token": csrf_token[0],
+                "email": self.email,
+                "password": self.password
+            }
+
+            req = await self.session.post('https://www.hackthebox.eu/login', data=data)
+
+            if req.status_code == 200:
+                print("Connecté à HTB !")
+                return True
+
+            print("Connexion impossible.")
             return False
 
-        data = {
-            "_token": csrf_token[0],
-            "email": self.email,
-            "password": self.password
-        }
-
-        req = self.session.post("https://www.hackthebox.eu/login", data=data, headers=self.headers)
-
-        if req.status_code == 200:
-            print("Connecté à HTB !")
-            self.session.headers.update(self.headers)
-            return True
-
-        print("Connexion impossible.")
-        return False
+        return trio.run(_login)
 
 
     def refresh_boxs(self):
-        print("Rafraichissement des boxs...")
+        async def _refresh_boxs():
+            print("Rafraichissement des boxs...")
 
-        req = self.session.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
+            req = await self.session.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
 
-        if req.status_code == 200:
-            new_boxs = json.loads(req.text)
-            old_boxs = self.boxs
-            old_boxs_ids = [d['id'] for d in old_boxs]
-            boxs = []
+            if req.status_code == 200:
+                new_boxs = json.loads(req.text)
+                old_boxs = self.boxs
+                old_boxs_ids = [d['id'] for d in old_boxs]
+                boxs = []
 
-            for box in new_boxs:
-                #If there is a new box
-                if box["id"] not in old_boxs_ids:
-                    old_boxs.append(box)
+                for box in new_boxs:
+                    #If there is a new box
+                    if box["id"] not in old_boxs_ids:
+                        old_boxs.append(box)
 
-            for o_box, n_box in zip(old_boxs, new_boxs):
-                o_box["name"] = n_box["name"]
-                o_box["avatar_thumb"] = n_box["avatar_thumb"]
-                o_box["ip"] = n_box["ip"]
-                o_box["os"] = n_box["os"]
-                o_box["points"] = n_box["points"]
-                o_box["rating"] = n_box["rating"]
-                o_box["retired"] = n_box["retired"]
-                o_box["retired_date"] = n_box["retired_date"]
-                o_box["user_owns"] = n_box["user_owns"]
-                o_box["root_owns"] = n_box["root_owns"]
-                o_box["release"] = n_box["release"]
-                o_box["maker"] = n_box["maker"]
-                o_box["maker2"] = n_box["maker2"]
-                o_box["free"] = n_box["free"]
+                for o_box, n_box in zip(old_boxs, new_boxs):
+                    o_box["name"] = n_box["name"]
+                    o_box["avatar_thumb"] = n_box["avatar_thumb"]
+                    o_box["ip"] = n_box["ip"]
+                    o_box["os"] = n_box["os"]
+                    o_box["points"] = n_box["points"]
+                    o_box["rating"] = n_box["rating"]
+                    o_box["retired"] = n_box["retired"]
+                    o_box["retired_date"] = n_box["retired_date"]
+                    o_box["user_owns"] = n_box["user_owns"]
+                    o_box["root_owns"] = n_box["root_owns"]
+                    o_box["release"] = n_box["release"]
+                    o_box["maker"] = n_box["maker"]
+                    o_box["maker2"] = n_box["maker2"]
+                    o_box["free"] = n_box["free"]
 
-                boxs.append(o_box)
+                    boxs.append(o_box)
 
-            self.write_boxs(boxs)
-            print("La liste des boxs a été mise à jour !")
-            return True
+                self.write_boxs(boxs)
+                print("La liste des boxs a été mise à jour !")
+                return True
 
-        return False
+            return False
 
+        return trio.run(_refresh_boxs)
 
     def get_box(self, name="name", matrix=False, last=False):
-        boxs = self.boxs
+        async def _get_box():
+            boxs = self.boxs
 
-        box = ""
-        if last:
-            box = boxs[-1]
-        else:
-            for b in boxs :
-                if b["name"].lower() == name.lower():
-                    box = b
-                    break
-            if not box:
-                return False
+            box = ""
+            if last:
+                box = boxs[-1]
+            else:
+                for b in boxs :
+                    if b["name"].lower() == name.lower():
+                        box = b
+                        break
+                if not box:
+                    return False
 
-        if matrix:
-            req = requests.get("https://www.hackthebox.eu/api/machines/get/matrix/" + str(box["id"]), params=self.payload, headers=self.headers)
-            if req.status_code == 200:
-                matrix_data = json.loads(req.text)
+            if matrix:
+                req = await self.session.get("https://www.hackthebox.eu/api/machines/get/matrix/" + str(box["id"]), params=self.payload, headers=self.headers)
+                if req.status_code == 200:
+                    matrix_data = json.loads(req.text)
 
-            with open("resources/template_matrix.txt", "r") as f:
-                template = json.loads(f.read())
+                with open("resources/template_matrix.txt", "r") as f:
+                    template = json.loads(f.read())
 
-            template["data"][0]["r"] = matrix_data["aggregate"]
-            template["data"][1]["r"] = matrix_data["maker"]
+                template["data"][0]["r"] = matrix_data["aggregate"]
+                template["data"][1]["r"] = matrix_data["maker"]
 
-            fig = go.Figure(template)
+                fig = go.Figure(template)
 
-            fig.write_image("resources/matrix.png")
+                fig.write_image("resources/matrix.png")
 
 
-        embed = discord.Embed(title=box["name"], color=0x9acc14)
-        embed.set_thumbnail(url=box["avatar_thumb"])
-        embed.add_field(name="IP", value=str(box["ip"]), inline=True)
-        if box["os"] == "Windows":
-            emoji = "<:windows:649003886828322827> "
-        elif box["os"] == "Linux":
-            emoji = "<:linux:649003931590066176> "
-        else:
-            emoji = ""
-        embed.add_field(name="OS", value=emoji + box["os"], inline=True)
-        if box["points"] == 20:
-            difficulty = "Easy"
-        elif box["points"] == 30:
-            difficulty = "Medium"
-        elif box["points"] == 40:
-            difficulty = "Hard"
-        elif box["points"] == 50:
-            difficulty = "Insane"
-        else:
-            difficulty = "?"
+            embed = discord.Embed(title=box["name"], color=0x9acc14)
+            embed.set_thumbnail(url=box["avatar_thumb"])
+            embed.add_field(name="IP", value=str(box["ip"]), inline=True)
+            if box["os"] == "Windows":
+                emoji = "<:windows:649003886828322827> "
+            elif box["os"] == "Linux":
+                emoji = "<:linux:649003931590066176> "
+            else:
+                emoji = ""
+            embed.add_field(name="OS", value=emoji + box["os"], inline=True)
+            if box["points"] == 20:
+                difficulty = "Easy"
+            elif box["points"] == 30:
+                difficulty = "Medium"
+            elif box["points"] == 40:
+                difficulty = "Hard"
+            elif box["points"] == 50:
+                difficulty = "Insane"
+            else:
+                difficulty = "?"
 
-        embed.add_field(name="Difficulty", value="{} ({} points)".format(difficulty, box["points"]), inline=True)
-        embed.add_field(name="Rating", value="⭐ {}".format(box["rating"]), inline=True)
+            embed.add_field(name="Difficulty", value="{} ({} points)".format(difficulty, box["points"]), inline=True)
+            embed.add_field(name="Rating", value="⭐ {}".format(box["rating"]), inline=True)
 
-        if box["retired"]:
-            status = "Retired"
-        else:
-            status = "Active"
-        embed.add_field(name="Status", value=status, inline=True)
-        embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
-        embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]), inline=True)
+            if box["retired"]:
+                status = "Retired"
+            else:
+                status = "Active"
+            embed.add_field(name="Status", value=status, inline=True)
+            embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
+            embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]), inline=True)
 
-        if matrix:
-            file = discord.File("resources/matrix.png", filename="matrix.png")
-            embed.set_image(url="attachment://matrix.png")
-        else:
-            file = ""
+            if matrix:
+                file = discord.File("resources/matrix.png", filename="matrix.png")
+                embed.set_image(url="attachment://matrix.png")
+            else:
+                file = ""
 
-        if box["maker2"]:
-            embed.set_footer(text="Makers : {} & {}".format(box["maker"]["name"], box["maker2"]["name"]), icon_url=box["avatar_thumb"])
-        else:
-            embed.set_footer(text="Maker : {}".format(box["maker"]["name"]), icon_url=box["avatar_thumb"])
+            if box["maker2"]:
+                embed.set_footer(text="Makers : {} & {}".format(box["maker"]["name"], box["maker2"]["name"]), icon_url=box["avatar_thumb"])
+            else:
+                embed.set_footer(text="Maker : {}".format(box["maker"]["name"]), icon_url=box["avatar_thumb"])
 
-        return {"embed": embed, "file": file}
+            return {"embed": embed, "file": file}
+
+        return trio.run(_get_box)
 
 
     def verify_user(self, discord_id, htb_acc_id):
-        req = requests.get("https://www.hackthebox.eu/api/users/identifier/" + htb_acc_id, headers=self.headers)
+        async def _verify_user():
+            req = await self.session.get("https://www.hackthebox.eu/api/users/identifier/" + htb_acc_id, headers=self.headers)
 
-        if req.status_code == 200:
-            users = self.users
+            if req.status_code == 200:
+                users = self.users
 
-            user_info = json.loads(req.text)
+                user_info = json.loads(req.text)
 
-            for user in users:
-                if user["discord_id"] == discord_id:
-                    return "already_in"
+                for user in users:
+                    if user["discord_id"] == discord_id:
+                        return "already_in"
 
-            users.append({
-                "discord_id": discord_id,
-                "htb_id": user_info["user_id"],
-            })
+                users.append({
+                    "discord_id": discord_id,
+                    "htb_id": user_info["user_id"],
+                })
 
-            self.write_users(users)
+                self.write_users(users)
 
-            self.refresh_user(user_info["user_id"], new=True) #On scrape son profil
+                await self.refresh_user(user_info["user_id"], new=True) #On scrape son profil
 
-            return user_info["rank"]
-        else:
-            return "wrong_id"
+                return user_info["rank"]
+            else:
+                return "wrong_id"
+
+        return trio.run(_verify_user)
 
 
     def discord_to_htb_id(self, discord_id):
@@ -281,24 +298,27 @@ class HTBot():
 
 
     def htb_id_by_name(self, name):
+        async def _htb_id_by_name():
 
-        params = {
-            'username': name,
-            'api_token': self.api_token
-        }
+            params = {
+                'username': name,
+                'api_token': self.api_token
+            }
 
-        req = requests.post("https://www.hackthebox.eu/api/user/id", params=params, headers=self.headers)
+            req = await self.session.post("https://www.hackthebox.eu/api/user/id", params=params, headers=self.headers)
 
-        try:
-            user = json.loads(req.text)
-            return user["id"]
-        except json.decoder.JSONDecodeError:
-            return False
+            try:
+                user = json.loads(req.text)
+                return user["id"]
+            except json.decoder.JSONDecodeError:
+                return False
+
+        return trio.run(_htb_id_by_name)
 
 
-    def extract_user_info(self, htb_id):
+    async def extract_user_info(self, htb_id):
         infos = {}
-        req = self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(htb_id), headers=self.headers)
+        req = await self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(htb_id), headers=self.headers)
 
         if req.status_code == 200:
             body = req.text
@@ -322,22 +342,25 @@ class HTBot():
 
 
     def get_user(self, htb_id):
-        infos = self.extract_user_info(htb_id)
+        async def _get_user():
+            infos = await self.extract_user_info(htb_id)
 
-        embed = discord.Embed(title=infos["username"], color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
-        embed.set_thumbnail(url=infos["avatar"])
-        embed.add_field(name="About", value="📍 {} | 🔰 {}\n\n**Ownership** : {} | **Rank** : {} | ⚙️ **Challenges** : {}".format(infos["country"], infos["level"], infos["ownership"], infos["rank"], infos["challs"]))
+            embed = discord.Embed(title=infos["username"], color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
+            embed.set_thumbnail(url=infos["avatar"])
+            embed.add_field(name="About", value="📍 {} | 🔰 {}\n\n**Ownership** : {} | **Rank** : {} | ⚙️ **Challenges** : {}".format(infos["country"], infos["level"], infos["ownership"], infos["rank"], infos["challs"]))
 
-        return embed
+            return embed
+
+        return trio.run(_get_user)
 
 
-    def refresh_user(self, htb_id, new=False):
+    async def refresh_user(self, htb_id, new=False):
         users = self.users
 
         count = 0
         for user in users:
             if user["htb_id"] == htb_id:
-                infos = self.extract_user_info(htb_id)
+                infos = await self.extract_user_info(htb_id)
 
                 try:
                     users[count]["username"]
@@ -353,34 +376,47 @@ class HTBot():
                 users[count]["country"] = infos["country"]
 
                 if new:
-                    print("New user détecté !")
-                    self.notif["new_user"]["content"]["discord_id"] = users[count]["discord_id"]
-                    self.notif["new_user"]["content"]["htb_id"] = users[count]["htb_id"]
-                    self.notif["new_user"]["content"]["level"] = infos["level"]
-                    self.notif["new_user"]["state"] = True
+                    async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
+                        print("New user détecté !")
+                        self.notif["new_user"]["content"]["discord_id"] = users[count]["discord_id"]
+                        self.notif["new_user"]["content"]["htb_id"] = users[count]["htb_id"]
+                        self.notif["new_user"]["content"]["level"] = infos["level"]
+                        self.notif["new_user"]["state"] = True
+                        trio.sleep(10) # As notifs are checked every 5 seconds, we wait 10 secs to be sure
+
                 else:
-                    if users[count]["level"] != infos["level"]:
-                        self.notif["update_role"]["content"]["discord_id"] = users[count]["discord_id"]
-                        self.notif["update_role"]["content"]["prev_rank"] = users[count]["level"]
-                        self.notif["update_role"]["content"]["new_rank"] = infos["level"]
-                        self.notif["update_role"]["state"] = True
+                    async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
+                        if users[count]["level"] != infos["level"]:
+                            self.notif["update_role"]["content"]["discord_id"] = users[count]["discord_id"]
+                            self.notif["update_role"]["content"]["prev_rank"] = users[count]["level"]
+                            self.notif["update_role"]["content"]["new_rank"] = infos["level"]
+                            self.notif["update_role"]["state"] = True
+                            trio.sleep(10) # Since notifs are checked every 5 seconds, we wait 10 secs to be sure
 
                 users[count]["level"] = infos["level"]
                 users[count]["rank"] = infos["rank"]
                 users[count]["challs"] = infos["challs"]
                 users[count]["ownership"] = infos["ownership"]
-            count += 1
 
-        self.write_users(users)
+                async with self.locks["write_user"]:
+                    self.write_users(users)
+                break
+
+            count += 1
 
 
     def refresh_all_users(self):
-        users = self.users
+        async def _refresh_all_users():
+            print("Rafraichissement des users...")
+            users = self.users
 
-        for user in users:
-            self.refresh_user(user["htb_id"])
+            async with trio.open_nursery() as nursery:
+                for user in users:
+                    nursery.start_soon(self.refresh_user, user["htb_id"])
 
-        print("Les users ont été mis à jour !")
+            print("Les users ont été mis à jour !")
+
+        trio.run(_refresh_all_users)
 
 
     def leaderboard(self):
@@ -413,115 +449,118 @@ class HTBot():
 
 
     def shoutbox(self):
+        async def _shoutbox():
 
-        def update_last_checked(msg, checked, last_checked):
-            checked.append(msg)
-            self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
+            def update_last_checked(msg, checked, last_checked):
+                checked.append(msg)
+                self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
 
-        def notif_box_pwn(result, user):
-            self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
+            def notif_box_pwn(result, user):
+                self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
 
-            if result[1] == "system":
-                self.notif["box_pwn"]["content"]["pwn"] = "root"
-            else:
-                self.notif["box_pwn"]["content"]["pwn"] = result[1]
+                if result[1] == "system":
+                    self.notif["box_pwn"]["content"]["pwn"] = "root"
+                else:
+                    self.notif["box_pwn"]["content"]["pwn"] = result[1]
 
-            self.notif["box_pwn"]["content"]["box_name"] = result[2]
-            self.notif["box_pwn"]["state"] = True
+                self.notif["box_pwn"]["content"]["box_name"] = result[2]
+                self.notif["box_pwn"]["state"] = True
 
-        def notif_chall_pwn(result, user):
-            self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
-            self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
-            self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
-            self.notif["chall_pwn"]["state"] = True
+            def notif_chall_pwn(result, user):
+                self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
+                self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
+                self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
+                self.notif["chall_pwn"]["state"] = True
 
-        def notif_box_incoming(result):
-            self.notif["new_box"]["content"]["box_name"] = result[0]
-            self.notif["new_box"]["content"]["time"] = result[1]
-            self.notif["new_box"]["content"]["incoming"] = True
-            self.notif["new_box"]["state"] = True
+            def notif_box_incoming(result):
+                self.notif["new_box"]["content"]["box_name"] = result[0]
+                self.notif["new_box"]["content"]["time"] = result[1]
+                self.notif["new_box"]["content"]["incoming"] = True
+                self.notif["new_box"]["state"] = True
 
-        def notif_new_box(result):
-            self.notif["new_box"]["content"]["box_name"] = result[0]
-            self.notif["new_box"]["content"]["time"] = ""
-            self.notif["new_box"]["content"]["incoming"] = False
-            self.notif["new_box"]["state"] = True
+            def notif_new_box(result):
+                self.notif["new_box"]["content"]["box_name"] = result[0]
+                self.notif["new_box"]["content"]["time"] = ""
+                self.notif["new_box"]["content"]["incoming"] = False
+                self.notif["new_box"]["state"] = True
 
-        def notif_vip_upgrade(user):
-            self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
-            self.notif["vip_upgrade"]["state"] = True
+            def notif_vip_upgrade(user):
+                self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
+                self.notif["vip_upgrade"]["state"] = True
 
-        req = self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
+            req = await self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
 
-        if req.status_code == 200:
-            history = deepcopy(json.loads(req.text)["html"])
-            last_checked = deepcopy(self.last_checked)
-            users = deepcopy(self.users)
+            if req.status_code == 200:
+                history = deepcopy(json.loads(req.text)["html"])
+                last_checked = deepcopy(self.last_checked)
+                users = deepcopy(self.users)
 
-            checked = deepcopy([])
-            regexs = self.regexs
+                checked = deepcopy([])
+                regexs = self.regexs
 
-            for msg in history:
-                if msg not in last_checked:
+                for msg in history:
+                    if msg not in last_checked:
 
-                    #Check les box pwns
-                    result = re.compile(regexs["box_pwn"]).findall(msg)
-                    if result and len(result[0]) == 3:
-                        result = result[0]
-                        for user in users:
-                            if str(user["htb_id"]) == result[0]:
-                                notif_box_pwn(result, user)
+                        #Check les box pwns
+                        result = re.compile(regexs["box_pwn"]).findall(msg)
+                        if result and len(result[0]) == 3:
+                            result = result[0]
+                            for user in users:
+                                if str(user["htb_id"]) == result[0]:
+                                    notif_box_pwn(result, user)
+                                    update_last_checked(msg, checked, last_checked)
+                                    await self.refresh_user(int(result[0])) #On met à jour les infos du user
+
+                                    return True
+
+                        #Check les challenges pwns
+                        result = re.compile(regexs["chall_pwn"]).findall(msg)
+                        if result and len(result[0]) == 3:
+                            result = result[0]
+                            for user in users:
+                                if str(user["htb_id"]) == result[0]:
+                                    notif_chall_pwn(result, user)
+                                    update_last_checked(msg, checked, last_checked)
+                                    await self.refresh_user(int(result[0])) #On met à jour les infos du user
+
+                                    return True
+
+                        #Check box incoming
+                        result = re.compile(regexs["new_box_incoming"]).findall(msg)
+                        if result and len(result[0]) == 2:
+                            result = result[0]
+                            old_time = self.notif["new_box"]["content"]["time"]
+                            new_time = result[1]
+                            if not old_time or (new_time.split(":")[0] == "15" and old_time.split(":")[0] != "15") or (new_time.split(":")[0] == "10" and old_time.split(":")[0] != "10") or (new_time.split(":")[0] == "05" and old_time.split(":")[0] != "05") or new_time.split(":")[0] == "01" or new_time.split(":")[0] == "00":
+                                notif_box_incoming(result)
                                 update_last_checked(msg, checked, last_checked)
-                                self.refresh_user(int(result[0])) #On met à jour les infos du user
 
                                 return True
 
-                    #Check les challenges pwns
-                    result = re.compile(regexs["chall_pwn"]).findall(msg)
-                    if result and len(result[0]) == 3:
-                        result = result[0]
-                        for user in users:
-                            if str(user["htb_id"]) == result[0]:
-                                notif_chall_pwn(result, user)
-                                update_last_checked(msg, checked, last_checked)
-                                self.refresh_user(int(result[0])) #On met à jour les infos du user
-
-                                return True
-
-                    #Check box incoming
-                    result = re.compile(regexs["new_box_incoming"]).findall(msg)
-                    if result and len(result[0]) == 2:
-                        result = result[0]
-                        old_time = self.notif["new_box"]["content"]["time"]
-                        new_time = result[1]
-                        if not old_time or (new_time.split(":")[0] == "15" and old_time.split(":")[0] != "15") or (new_time.split(":")[0] == "10" and old_time.split(":")[0] != "10") or (new_time.split(":")[0] == "05" and old_time.split(":")[0] != "05") or new_time.split(":")[0] == "01" or new_time.split(":")[0] == "00":
-                            notif_box_incoming(result)
+                        #Check new box
+                        result = re.compile(regexs["new_box_out"]).findall(msg)
+                        if type(result) is list and result and len(result) == 1:
+                            notif_new_box(result)
                             update_last_checked(msg, checked, last_checked)
 
                             return True
 
-                    #Check new box
-                    result = re.compile(regexs["new_box_out"]).findall(msg)
-                    if type(result) is list and result and len(result) == 1:
-                        notif_new_box(result)
-                        update_last_checked(msg, checked, last_checked)
+                        #Check VIP upgrade
+                        result = re.compile(regexs["vip_upgrade"]).findall(msg)
+                        if type(result) is list and result and len(result) == 1:
+                            for user in users:
+                                if str(user["htb_id"]) == result[0]:
+                                    notif_vip_upgrade(user)
+                                    update_last_checked(msg, checked, last_checked)
+                                    await self.refresh_user(int(result[0])) #On met à jour les infos du user
 
-                        return True
+                                    return True
 
-                    #Check VIP upgrade
-                    result = re.compile(regexs["vip_upgrade"]).findall(msg)
-                    if type(result) is list and result and len(result) == 1:
-                        for user in users:
-                            if str(user["htb_id"]) == result[0]:
-                                notif_vip_upgrade(user)
-                                update_last_checked(msg, checked, last_checked)
-                                self.refresh_user(int(result[0])) #On met à jour les infos du user
+                        checked.append(msg)
 
-                                return True
+                self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
 
-                    checked.append(msg)
-
-            self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
+        return trio.run(_shoutbox)
 
 
     def list_boxs(self, type=""):
@@ -594,77 +633,82 @@ class HTBot():
         return False
 
     def account(self, discord_id, delete=False, shoutbox_onoff=False):
-        users = self.users
-        if action:
-            if action.lower() == "-delete":
-                for user in users:
-                    if user["discord_id"] == discord_id:
-                        users.pop(user)
-                        self.write_users(users)
+        pass
+        # users = self.users
+        # if action:
+        #     if action.lower() == "-delete":
+        #         for user in users:
+        #             if user["discord_id"] == discord_id:
+        #                 users.pop(user)
+        #                 self.write_users(users)
+        #
+        #                 return "success"
+        #
+        #     elif action.lower() == "-shoutbox":
+        #         pass
+        #     else:
+        #         return "wrong_arg"
 
-                        return "success"
-
-            elif action.lower() == "-shoutbox":
-                pass
-            else:
-                return "wrong_arg"
 
     def writeup(self, box_name, links=False, page=1):
-        boxs = self.boxs
-        regexs = self.regexs
+        async def _writeup():
+            boxs = self.boxs
+            regexs = self.regexs
 
-        for box in boxs:
-            if box["name"].lower() == box_name.lower():
-                if links:
-                    req = self.session.get("https://www.hackthebox.eu/home/machines/profile/" + str(box["id"]), headers=self.headers)
+            for box in boxs:
+                if box["name"].lower() == box_name.lower():
+                    if links:
+                        req = await self.session.get("https://www.hackthebox.eu/home/machines/profile/" + str(box["id"]), headers=self.headers)
 
-                    if req.status_code == 200:
-                        body = req.text
-                        html = Selector(text=body)
+                        if req.status_code == 200:
+                            body = req.text
+                            html = Selector(text=body)
 
-                        wpsection = html.css('div.panel.panel-filled').getall()[-1]
-                        result = re.compile(regexs["writeup_links"]).findall(wpsection)
+                            wpsection = html.css('div.panel.panel-filled').getall()[-1]
+                            result = re.compile(regexs["writeup_links"]).findall(wpsection)
 
-                        #If there are writeup links
-                        if result and len(result[0]) == 2:
-                            nb = len(result)
-                            limit = 5 # Pagination
-                            if nb/limit - nb//limit == 0.0:
-                                total = nb//limit
+                            #If there are writeup links
+                            if result and len(result[0]) == 2:
+                                nb = len(result)
+                                limit = 5 # Pagination
+                                if nb/limit - nb//limit == 0.0:
+                                    total = nb//limit
+                                else:
+                                    total = nb//limit + 1
+                                if page > total:
+                                    return {"status": "too_high"}
+
+                                else:
+                                    writeups = result[(limit*page-limit):(limit*page)]
+
+                                    text = ""
+                                    for wp in writeups:
+                                        text += "**Auteur : {}**\n**Lien :** {}\n\n".format(wp[0], wp[1])
+
+                                    embed = discord.Embed(title="📚 Writeups submitted | {}".format(box["name"].capitalize()), color=0x9acc14, description=text)
+                                    embed.set_footer(text="📖 Page : {} / {}".format(page, total))
+
+                                    return {"status" : "found", "embed": embed}
+
                             else:
-                                total = nb//limit + 1
-                            if page > total:
-                                return {"status": "too_high"}
+                                return {"status": "empty"}
 
-                            else:
-                                writeups = result[(limit*page-limit):(limit*page)]
+                        return False
 
-                                text = ""
-                                for wp in writeups:
-                                    text += "**Auteur : {}**\n**Lien :** {}\n\n".format(wp[0], wp[1])
+                    else:
+                        req = await self.session.get("https://www.hackthebox.eu/home/machines/writeup/" + str(box["id"]), headers=self.headers)
 
-                                embed = discord.Embed(title="📚 Writeups submitted | {}".format(box["name"].capitalize()), color=0x9acc14, description=text)
-                                embed.set_footer(text="📖 Page : {} / {}".format(page, total))
+                        if req.status_code == 200:
+                            pathname = 'resources/writeups/' + box["name"].lower() + '.pdf'
+                            if not path.exists(pathname):
+                                open(pathname, 'wb').write(req.content)
 
-                                return {"status" : "found", "embed": embed}
+                            file = discord.File(pathname, filename=box["name"].lower() + '.pdf')
+                            return file
 
-                        else:
-                            return {"status": "empty"}
+                        return False
 
-                    return False
-
-                else:
-                    req = self.session.get("https://www.hackthebox.eu/home/machines/writeup/" + str(box["id"]), headers=self.headers)
-
-                    if req.status_code == 200:
-                        pathname = 'resources/writeups/' + box["name"].lower() + '.pdf'
-                        if not path.exists(pathname):
-                            open(pathname, 'wb').write(req.content)
-
-                        file = discord.File(pathname, filename=box["name"].lower() + '.pdf')
-                        return file
-
-                    return False
+        return trio.run(_writeup)
 
 
     def ippsec(self, search, page):
@@ -680,7 +724,7 @@ class HTBot():
                 results.append({"title": step["machine"].strip(),
                                 "description": step["line"].strip(),
                                 "url": "https://youtube.com/watch?v={}&t={}".format(step["videoId"], seconds),
-                                "timestamp": time.strftime("%H:%M:%S", time.gmtime(seconds))})
+                                "timestamp": strftime("%H:%M:%S", gmtime(seconds))})
 
         if len(search) > 22:
             search = search[:22] + "..."

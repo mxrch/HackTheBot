@@ -2,6 +2,7 @@ import discord
 from discord.ext import tasks, commands
 from lib.htb import HTBot
 import config as cfg
+import pdb
 
 description = '''HideAndSec's slave bot'''
 bot = commands.Bot(command_prefix='>', description=description)
@@ -93,11 +94,11 @@ class tasksCog(commands.Cog):
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
                     member = guild.get_member(content["discord_id"])
-            await shoutbox.send("🍾 est devenu VIP {} ! Préparez le champagne et le caviar 🥂".format(member.mention))
+            await shoutbox.send("🍾 {} est devenu VIP ! Préparez le champagne et le caviar 🥂".format(member.mention))
             htbot.notif["vip_upgrade"]["state"] = False
 
 
-    @tasks.loop(seconds=5.0) #Toutes les 5 secondes
+    @tasks.loop(seconds=3.0) #Toutes les 3 secondes
     async def refresh_shoutbox(self):
         htbot.shoutbox()
 
@@ -205,7 +206,6 @@ async def get_box(ctx, name="", matrix=""):
         matrix = "-matrix"
 
     if name:
-        tasks = bot.get_cog('tasksCog')
         if matrix:
             if matrix.lower() == "-matrix":
                 box = htbot.get_box(name, matrix=True)
