@@ -89,4 +89,13 @@ Here are some screens (in french) to tease the bot :
 ![](https://files.catbox.moe/5qm6ut.PNG)
 
 
+## Async update !
+I redid the user scraping asynchronously, and for 10 users, it went from 47 to 5 seconds !
+
+### Performance tests in synchronous :
+![](https://files.catbox.moe/7gobyx.png)
+
+### And in asynchronous :
+![](https://files.catbox.moe/549e3t.png)
+
 If you have question or just want to contact me on Discord : **mxrch#8507** ❤
