@@ -216,9 +216,6 @@ async def get_box(ctx, name="", matrix=""):
             box = htbot.get_box(name)
 
         if box:
-            if matrix:
-                await ctx.send("", file=box["file"], embed=box["embed"])
-            else:
                 await ctx.send("", embed=box["embed"])
         else:
             await ctx.send("Cette box n'existe pas.")
@@ -232,10 +229,11 @@ async def get_box(ctx, name="", matrix=""):
             if box_status:
                 if matrix:
                     box = htbot.get_box(box_name, matrix=True)
-                    await ctx.send("", file=box["file"], embed=box["embed"])
                 else:
                     box = htbot.get_box(box_name)
-                    await ctx.send("", embed=box["embed"])
+
+                await ctx.send("", embed=box["embed"])
+
             else:
                 await ctx.send("Tu n'as pas précisé la box.")
 

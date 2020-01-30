@@ -9,6 +9,8 @@ from copy import deepcopy
 from scrapy.selector import Selector
 import plotly.graph_objects as go
 import config as cfg
+import resources.charts as charts
+import urllib
 import pdb
 
 class HTBot():
@@ -199,16 +201,10 @@ class HTBot():
                 req = await self.session.get("https://www.hackthebox.eu/api/machines/get/matrix/" + str(box["id"]), params=self.payload, headers=self.headers)
                 if req.status_code == 200:
                     matrix_data = json.loads(req.text)
+                else:
+                    return False
 
-                with open("resources/template_matrix.txt", "r") as f:
-                    template = json.loads(f.read())
-
-                template["data"][0]["r"] = matrix_data["aggregate"]
-                template["data"][1]["r"] = matrix_data["maker"]
-
-                fig = go.Figure(template)
-
-                fig.write_image("resources/matrix.png")
+                matrix_url = urllib.parse.quote_plus(charts.templates["matrix"].format(matrix_data["aggregate"], matrix_data["maker"]), safe=';/?:@&=+$,').replace('+', '%20').replace('%0A', '\\n')
 
 
             embed = discord.Embed(title=box["name"], color=0x9acc14)
@@ -244,17 +240,14 @@ class HTBot():
             embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]), inline=True)
 
             if matrix:
-                file = discord.File("resources/matrix.png", filename="matrix.png")
-                embed.set_image(url="attachment://matrix.png")
-            else:
-                file = ""
+                embed.set_image(url=matrix_url)
 
             if box["maker2"]:
                 embed.set_footer(text="Makers : {} & {}".format(box["maker"]["name"], box["maker2"]["name"]), icon_url=box["avatar_thumb"])
             else:
                 embed.set_footer(text="Maker : {}".format(box["maker"]["name"]), icon_url=box["avatar_thumb"])
 
-            return {"embed": embed, "file": file}
+            return {"embed": embed}
 
         return trio.run(_get_box)
 
