@@ -2,6 +2,9 @@ import discord
 from discord.ext import tasks, commands
 from lib.htb import HTBot
 import config as cfg
+from trio import run as trio_run
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import pdb
 
 description = '''HideAndSec's slave bot'''
@@ -9,6 +12,15 @@ bot = commands.Bot(command_prefix='>', description=description)
 
 htbot = HTBot(cfg.HTB['email'], cfg.HTB['password'], cfg.HTB['api_token'])
 
+LOCKS = {
+    "refresh_users": asyncio.Lock()
+}
+
+THREADS = {
+    "refresh_users": ThreadPoolExecutor(max_workers=1)
+}
+
+LOOP = asyncio.get_event_loop()
 
 #Start
 
@@ -104,7 +116,7 @@ class tasksCog(commands.Cog):
 
     @tasks.loop(seconds=1800.0) #Toutes les 30 minutes
     async def htb_login(self):
-        htbot.login()
+        trio_run(htbot.login)
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def refresh_boxs(self):
@@ -112,7 +124,7 @@ class tasksCog(commands.Cog):
 
     @tasks.loop(seconds=600.0) #Toutes les 10 minutes
     async def refresh_all_users(self):
-        htbot.refresh_all_users()
+        LOOP.run_in_executor(THREADS["refresh_users"], trio_run, htbot.refresh_all_users)
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def manage_channels(self):
@@ -240,7 +252,6 @@ async def get_box(ctx, name="", matrix=""):
 @bot.command()
 async def last_box(ctx, matrix=""):
     """Get info on the newest box"""
-    tasks = bot.get_cog('tasksCog')
     if matrix:
         if matrix.lower() == "-matrix":
             box = htbot.get_box(matrix=True, last=True)
@@ -325,14 +336,12 @@ async def list_boxs(ctx, type=""):
     type = type.lower()
     if type:
         if type in ["easy", "medium", "hard", "insane"]:
-            tasks = bot.get_cog('tasksCog')
             embed = htbot.list_boxs(type)
             await ctx.send("", embed=embed)
 
         else:
             await ctx.send("Difficulté inconnue.")
     else:
-        tasks = bot.get_cog('tasksCog')
         embed = htbot.list_boxs()
         await ctx.send("", embed=embed)
 

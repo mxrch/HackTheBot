@@ -7,7 +7,6 @@ from time import localtime, gmtime, strftime
 import discord
 from copy import deepcopy
 from scrapy.selector import Selector
-import plotly.graph_objects as go
 import config as cfg
 import resources.charts as charts
 import urllib
@@ -99,10 +98,11 @@ class HTBot():
             self.boxs = []
 
 
-    def write_users(self, users):
-        self.users = users
-        with open("users.txt", "w") as f:
-            f.write(json.dumps(users))
+    async def write_users(self, users):
+        async with self.locks["write_user"]:
+            self.users = users
+            with open("users.txt", "w") as f:
+                f.write(json.dumps(users))
 
 
     def write_boxs(self, boxs):
@@ -111,32 +111,29 @@ class HTBot():
             f.write(json.dumps(boxs))
 
 
-    def login(self):
-        async def _login():
-            req = await self.session.get("https://www.hackthebox.eu/login")
+    async def login(self):
+        req = await self.session.get("https://www.hackthebox.eu/login")
 
-            html = req.text
-            csrf_token = re.findall(r'type="hidden" name="_token" value="(.+?)"', html)
+        html = req.text
+        csrf_token = re.findall(r'type="hidden" name="_token" value="(.+?)"', html)
 
-            if not csrf_token:
-                return False
-
-            data = {
-                "_token": csrf_token[0],
-                "email": self.email,
-                "password": self.password
-            }
-
-            req = await self.session.post('https://www.hackthebox.eu/login', data=data)
-
-            if req.status_code == 200:
-                print("Connecté à HTB !")
-                return True
-
-            print("Connexion impossible.")
+        if not csrf_token:
             return False
 
-        return trio.run(_login)
+        data = {
+            "_token": csrf_token[0],
+            "email": self.email,
+            "password": self.password
+        }
+
+        req = await self.session.post('https://www.hackthebox.eu/login', data=data)
+
+        if req.status_code == 200:
+            print("Connecté à HTB !")
+            return True
+
+        print("Connexion impossible.")
+        return False
 
 
     def refresh_boxs(self):
@@ -270,7 +267,7 @@ class HTBot():
                     "htb_id": user_info["user_id"],
                 })
 
-                self.write_users(users)
+                await self.write_users(users)
 
                 await self.refresh_user(user_info["user_id"], new=True) #On scrape son profil
 
@@ -391,25 +388,23 @@ class HTBot():
                 users[count]["challs"] = infos["challs"]
                 users[count]["ownership"] = infos["ownership"]
 
-                async with self.locks["write_user"]:
-                    self.write_users(users)
+
+                await self.write_users(users)
                 break
 
             count += 1
 
 
-    def refresh_all_users(self):
-        async def _refresh_all_users():
-            print("Rafraichissement des users...")
-            users = self.users
+    async def refresh_all_users(self):
+        print("Rafraichissement des users...")
+        users = self.users
 
-            async with trio.open_nursery() as nursery:
-                for user in users:
-                    nursery.start_soon(self.refresh_user, user["htb_id"])
+        async with trio.open_nursery() as nursery:
+            for user in users:
+                nursery.start_soon(self.refresh_user, user["htb_id"])
 
-            print("Les users ont été mis à jour !")
+        print("Les users ont été mis à jour !")
 
-        trio.run(_refresh_all_users)
 
 
     def leaderboard(self):
