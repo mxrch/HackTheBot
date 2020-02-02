@@ -24,7 +24,8 @@ class HTBot():
         self.session = httpx.AsyncClient(headers=self.headers, timeout=360.0)
         self.locks = {
                 "notif": trio.Lock(),
-                "write_user": trio.Lock()
+                "write_users": trio.Lock(),
+                "write_boxs": trio.Lock()
                 }
 
         self.payload = {'api_token': self.api_token}
@@ -99,16 +100,17 @@ class HTBot():
 
 
     async def write_users(self, users):
-        async with self.locks["write_user"]:
+        async with self.locks["write_users"]:
             self.users = users
             with open("users.txt", "w") as f:
                 f.write(json.dumps(users))
 
 
-    def write_boxs(self, boxs):
-        self.boxs = boxs
-        with open("boxs.txt", "w") as f:
-            f.write(json.dumps(boxs))
+    async def write_boxs(self, boxs):
+        async with self.locks["write_boxs"]:
+            self.boxs = boxs
+            with open("boxs.txt", "w") as f:
+                f.write(json.dumps(boxs))
 
 
     async def login(self):
@@ -136,117 +138,112 @@ class HTBot():
         return False
 
 
-    def refresh_boxs(self):
-        async def _refresh_boxs():
-            print("Rafraichissement des boxs...")
+    async def refresh_boxs(self):
+        print("Rafraichissement des boxs...")
 
-            req = await self.session.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
+        req = await self.session.get("https://www.hackthebox.eu/api/machines/get/all/", params=self.payload, headers=self.headers)
 
+        if req.status_code == 200:
+            new_boxs = json.loads(req.text)
+            old_boxs = self.boxs
+            old_boxs_ids = [d['id'] for d in old_boxs]
+            boxs = []
+
+            for box in new_boxs:
+                #If there is a new box
+                if box["id"] not in old_boxs_ids:
+                    old_boxs.append(box)
+
+            for o_box, n_box in zip(old_boxs, new_boxs):
+                o_box["name"] = n_box["name"]
+                o_box["avatar_thumb"] = n_box["avatar_thumb"]
+                o_box["ip"] = n_box["ip"]
+                o_box["os"] = n_box["os"]
+                o_box["points"] = n_box["points"]
+                o_box["rating"] = n_box["rating"]
+                o_box["retired"] = n_box["retired"]
+                o_box["retired_date"] = n_box["retired_date"]
+                o_box["user_owns"] = n_box["user_owns"]
+                o_box["root_owns"] = n_box["root_owns"]
+                o_box["release"] = n_box["release"]
+                o_box["maker"] = n_box["maker"]
+                o_box["maker2"] = n_box["maker2"]
+                o_box["free"] = n_box["free"]
+
+                boxs.append(o_box)
+
+            await self.write_boxs(boxs)
+            print("La liste des boxs a été mise à jour !")
+            return True
+
+        return False
+
+
+    async def get_box(self, name="name", matrix=False, last=False):
+        boxs = self.boxs
+
+        box = ""
+        if last:
+            box = boxs[-1]
+        else:
+            for b in boxs :
+                if b["name"].lower() == name.lower():
+                    box = b
+                    break
+            if not box:
+                return False
+
+        if matrix:
+            req = await self.session.get("https://www.hackthebox.eu/api/machines/get/matrix/" + str(box["id"]), params=self.payload, headers=self.headers)
             if req.status_code == 200:
-                new_boxs = json.loads(req.text)
-                old_boxs = self.boxs
-                old_boxs_ids = [d['id'] for d in old_boxs]
-                boxs = []
-
-                for box in new_boxs:
-                    #If there is a new box
-                    if box["id"] not in old_boxs_ids:
-                        old_boxs.append(box)
-
-                for o_box, n_box in zip(old_boxs, new_boxs):
-                    o_box["name"] = n_box["name"]
-                    o_box["avatar_thumb"] = n_box["avatar_thumb"]
-                    o_box["ip"] = n_box["ip"]
-                    o_box["os"] = n_box["os"]
-                    o_box["points"] = n_box["points"]
-                    o_box["rating"] = n_box["rating"]
-                    o_box["retired"] = n_box["retired"]
-                    o_box["retired_date"] = n_box["retired_date"]
-                    o_box["user_owns"] = n_box["user_owns"]
-                    o_box["root_owns"] = n_box["root_owns"]
-                    o_box["release"] = n_box["release"]
-                    o_box["maker"] = n_box["maker"]
-                    o_box["maker2"] = n_box["maker2"]
-                    o_box["free"] = n_box["free"]
-
-                    boxs.append(o_box)
-
-                self.write_boxs(boxs)
-                print("La liste des boxs a été mise à jour !")
-                return True
-
-            return False
-
-        return trio.run(_refresh_boxs)
-
-    def get_box(self, name="name", matrix=False, last=False):
-        async def _get_box():
-            boxs = self.boxs
-
-            box = ""
-            if last:
-                box = boxs[-1]
+                matrix_data = json.loads(req.text)
             else:
-                for b in boxs :
-                    if b["name"].lower() == name.lower():
-                        box = b
-                        break
-                if not box:
-                    return False
+                return False
 
-            if matrix:
-                req = await self.session.get("https://www.hackthebox.eu/api/machines/get/matrix/" + str(box["id"]), params=self.payload, headers=self.headers)
-                if req.status_code == 200:
-                    matrix_data = json.loads(req.text)
-                else:
-                    return False
-
-                matrix_url = urllib.parse.quote_plus(charts.templates["matrix"].format(matrix_data["aggregate"], matrix_data["maker"]), safe=';/?:@&=+$,').replace('+', '%20').replace('%0A', '\\n')
+            matrix_url = urllib.parse.quote_plus(charts.templates["matrix"].format(matrix_data["aggregate"], matrix_data["maker"]), safe=';/?:@&=+$,').replace('+', '%20').replace('%0A', '\\n')
 
 
-            embed = discord.Embed(title=box["name"], color=0x9acc14)
-            embed.set_thumbnail(url=box["avatar_thumb"])
-            embed.add_field(name="IP", value=str(box["ip"]), inline=True)
-            if box["os"] == "Windows":
-                emoji = "<:windows:649003886828322827> "
-            elif box["os"] == "Linux":
-                emoji = "<:linux:649003931590066176> "
-            else:
-                emoji = ""
-            embed.add_field(name="OS", value=emoji + box["os"], inline=True)
-            if box["points"] == 20:
-                difficulty = "Easy"
-            elif box["points"] == 30:
-                difficulty = "Medium"
-            elif box["points"] == 40:
-                difficulty = "Hard"
-            elif box["points"] == 50:
-                difficulty = "Insane"
-            else:
-                difficulty = "?"
+        embed = discord.Embed(title=box["name"], color=0x9acc14)
+        embed.set_thumbnail(url=box["avatar_thumb"])
+        embed.add_field(name="IP", value=str(box["ip"]), inline=True)
+        if box["os"] == "Windows":
+            emoji = "<:windows:649003886828322827> "
+        elif box["os"] == "Linux":
+            emoji = "<:linux:649003931590066176> "
+        else:
+            emoji = ""
+        embed.add_field(name="OS", value=emoji + box["os"], inline=True)
+        if box["points"] == 20:
+            difficulty = "Easy"
+        elif box["points"] == 30:
+            difficulty = "Medium"
+        elif box["points"] == 40:
+            difficulty = "Hard"
+        elif box["points"] == 50:
+            difficulty = "Insane"
+        else:
+            difficulty = "?"
 
-            embed.add_field(name="Difficulty", value="{} ({} points)".format(difficulty, box["points"]), inline=True)
-            embed.add_field(name="Rating", value="⭐ {}".format(box["rating"]), inline=True)
+        embed.add_field(name="Difficulty", value="{} ({} points)".format(difficulty, box["points"]), inline=True)
+        embed.add_field(name="Rating", value="⭐ {}".format(box["rating"]), inline=True)
 
-            if box["retired"]:
-                status = "Retired"
-            else:
-                status = "Active"
-            embed.add_field(name="Status", value=status, inline=True)
-            embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
-            embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]), inline=True)
+        if box["retired"]:
+            status = "Retired"
+        else:
+            status = "Active"
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
+        embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]), inline=True)
 
-            if matrix:
-                embed.set_image(url=matrix_url)
+        if matrix:
+            embed.set_image(url=matrix_url)
 
-            if box["maker2"]:
-                embed.set_footer(text="Makers : {} & {}".format(box["maker"]["name"], box["maker2"]["name"]), icon_url=box["avatar_thumb"])
-            else:
-                embed.set_footer(text="Maker : {}".format(box["maker"]["name"]), icon_url=box["avatar_thumb"])
+        if box["maker2"]:
+            embed.set_footer(text="Makers : {} & {}".format(box["maker"]["name"], box["maker2"]["name"]), icon_url=box["avatar_thumb"])
+        else:
+            embed.set_footer(text="Maker : {}".format(box["maker"]["name"]), icon_url=box["avatar_thumb"])
 
-            return {"embed": embed}
-
-        return trio.run(_get_box)
+        return {"embed": embed}
 
 
     def verify_user(self, discord_id, htb_acc_id):
@@ -325,6 +322,10 @@ class HTBot():
             infos["rank"] = re.search(r'position (\d+) of the Hall of Fame', body).group(1)
             infos["challs"] = re.search(r'has solved (\d+) challenges', body).group(1)
             infos["ownership"] = html.css('div.progress-bar-success > span::text').get()
+            if html.css('div.header-title > h3 > i.fa-star'):
+                infos["vip"] = True
+            else:
+                infos["vip"] = False
 
             return infos
 
@@ -335,7 +336,12 @@ class HTBot():
         async def _get_user():
             infos = await self.extract_user_info(htb_id)
 
-            embed = discord.Embed(title=infos["username"], color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
+            if infos["vip"]:
+                vip = "  💠"
+            else:
+                vip = ""
+
+            embed = discord.Embed(title=infos["username"] + vip, color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
             embed.set_thumbnail(url=infos["avatar"])
             embed.add_field(name="About", value="📍 {} | 🔰 {}\n\n**Ownership** : {} | **Rank** : {} | ⚙️ **Challenges** : {}".format(infos["country"], infos["level"], infos["ownership"], infos["rank"], infos["challs"]))
 
@@ -638,65 +644,62 @@ class HTBot():
         #         return "wrong_arg"
 
 
-    def writeup(self, box_name, links=False, page=1):
-        async def _writeup():
-            boxs = self.boxs
-            regexs = self.regexs
+    async def writeup(self, box_name, links=False, page=1):
+        boxs = self.boxs
+        regexs = self.regexs
 
-            for box in boxs:
-                if box["name"].lower() == box_name.lower():
-                    if links:
-                        req = await self.session.get("https://www.hackthebox.eu/home/machines/profile/" + str(box["id"]), headers=self.headers)
+        for box in boxs:
+            if box["name"].lower() == box_name.lower():
+                if links:
+                    req = await self.session.get("https://www.hackthebox.eu/home/machines/profile/" + str(box["id"]), headers=self.headers)
 
-                        if req.status_code == 200:
-                            body = req.text
-                            html = Selector(text=body)
+                    if req.status_code == 200:
+                        body = req.text
+                        html = Selector(text=body)
 
-                            wpsection = html.css('div.panel.panel-filled').getall()[-1]
-                            result = re.compile(regexs["writeup_links"]).findall(wpsection)
+                        wpsection = html.css('div.panel.panel-filled').getall()[-1]
+                        result = re.compile(regexs["writeup_links"]).findall(wpsection)
 
-                            #If there are writeup links
-                            if result and len(result[0]) == 2:
-                                nb = len(result)
-                                limit = 5 # Pagination
-                                if nb/limit - nb//limit == 0.0:
-                                    total = nb//limit
-                                else:
-                                    total = nb//limit + 1
-                                if page > total:
-                                    return {"status": "too_high"}
-
-                                else:
-                                    writeups = result[(limit*page-limit):(limit*page)]
-
-                                    text = ""
-                                    for wp in writeups:
-                                        text += "**Auteur : {}**\n**Lien :** {}\n\n".format(wp[0], wp[1])
-
-                                    embed = discord.Embed(title="📚 Writeups submitted | {}".format(box["name"].capitalize()), color=0x9acc14, description=text)
-                                    embed.set_footer(text="📖 Page : {} / {}".format(page, total))
-
-                                    return {"status" : "found", "embed": embed}
+                        #If there are writeup links
+                        if result and len(result[0]) == 2:
+                            nb = len(result)
+                            limit = 5 # Pagination
+                            if nb/limit - nb//limit == 0.0:
+                                total = nb//limit
+                            else:
+                                total = nb//limit + 1
+                            if page > total:
+                                return {"status": "too_high"}
 
                             else:
-                                return {"status": "empty"}
+                                writeups = result[(limit*page-limit):(limit*page)]
 
-                        return False
+                                text = ""
+                                for wp in writeups:
+                                    text += "**Auteur : {}**\n**Lien :** {}\n\n".format(wp[0], wp[1])
 
-                    else:
-                        req = await self.session.get("https://www.hackthebox.eu/home/machines/writeup/" + str(box["id"]), headers=self.headers)
+                                embed = discord.Embed(title="📚 Writeups submitted | {}".format(box["name"].capitalize()), color=0x9acc14, description=text)
+                                embed.set_footer(text="📖 Page : {} / {}".format(page, total))
 
-                        if req.status_code == 200:
-                            pathname = 'resources/writeups/' + box["name"].lower() + '.pdf'
-                            if not path.exists(pathname):
-                                open(pathname, 'wb').write(req.content)
+                                return {"status" : "found", "embed": embed}
 
-                            file = discord.File(pathname, filename=box["name"].lower() + '.pdf')
-                            return file
+                        else:
+                            return {"status": "empty"}
 
-                        return False
+                    return False
 
-        return trio.run(_writeup)
+                else:
+                    req = await self.session.get("https://www.hackthebox.eu/home/machines/writeup/" + str(box["id"]), headers=self.headers)
+
+                    if req.status_code == 200:
+                        pathname = 'resources/writeups/' + box["name"].lower() + '.pdf'
+                        if not path.exists(pathname):
+                            open(pathname, 'wb').write(req.content)
+
+                        file = discord.File(pathname, filename=box["name"].lower() + '.pdf')
+                        return file
+
+                    return False
 
 
     def ippsec(self, search, page):

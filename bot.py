@@ -5,6 +5,7 @@ import config as cfg
 from trio import run as trio_run
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import functools
 import pdb
 
 description = '''HideAndSec's slave bot'''
@@ -12,12 +13,12 @@ bot = commands.Bot(command_prefix='>', description=description)
 
 htbot = HTBot(cfg.HTB['email'], cfg.HTB['password'], cfg.HTB['api_token'])
 
-LOCKS = {
-    "refresh_users": asyncio.Lock()
-}
-
 THREADS = {
-    "refresh_users": ThreadPoolExecutor(max_workers=1)
+    "refresh_users": ThreadPoolExecutor(max_workers=1),
+    "refresh_boxs": ThreadPoolExecutor(max_workers=1),
+    "writeup_links": ThreadPoolExecutor(max_workers=3),
+    "writeup_dl": ThreadPoolExecutor(max_workers=1),
+    "get_box": ThreadPoolExecutor(max_workers=5)
 }
 
 LOOP = asyncio.get_event_loop()
@@ -58,7 +59,7 @@ class tasksCog(commands.Cog):
 
         elif notif["new_user"]["state"]:
             content = notif["new_user"]["content"]
-            shoutbox = get_shoutbox_channel()
+            shoutbox = await get_shoutbox_channel()
             guilds = bot.guilds
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
@@ -70,7 +71,7 @@ class tasksCog(commands.Cog):
 
         elif notif["box_pwn"]["state"]:
             content = notif["box_pwn"]["content"]
-            shoutbox = get_shoutbox_channel()
+            shoutbox = await get_shoutbox_channel()
             guilds = bot.guilds
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
@@ -80,7 +81,7 @@ class tasksCog(commands.Cog):
 
         elif notif["chall_pwn"]["state"]:
             content = notif["chall_pwn"]["content"]
-            shoutbox = get_shoutbox_channel()
+            shoutbox = await get_shoutbox_channel()
             guilds = bot.guilds
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
@@ -90,18 +91,18 @@ class tasksCog(commands.Cog):
 
         elif notif["new_box"]["state"]:
             content = notif["new_box"]["content"]
-            shoutbox = get_shoutbox_channel()
+            shoutbox = await get_shoutbox_channel()
             if content["incoming"] == True:
                 await shoutbox.send("⏱️ La box {} arrive dans {} ! ⏱️".format(content["box_name"], content["time"]))
             else:
                 await shoutbox.send("@everyone 🚨 La nouvelle box {} est en ligne ! 🚨\nAurez-vous le first blood ? 🩸".format(content["box_name"]))
-                box = htbot.get_box(content["box_name"])
+                box = await thread_get_box(content["box_name"])
                 await shoutbox.send("", file=box["file"], embed=box["embed"])
             htbot.notif["new_box"]["state"] = False
 
         elif notif["vip_upgrade"]["state"]:
             content = notif["vip_upgrade"]["content"]
-            shoutbox = get_shoutbox_channel()
+            shoutbox = await get_shoutbox_channel()
             guilds = bot.guilds
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
@@ -120,7 +121,7 @@ class tasksCog(commands.Cog):
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def refresh_boxs(self):
-        htbot.refresh_boxs()
+        LOOP.run_in_executor(THREADS["refresh_boxs"], trio_run, htbot.refresh_boxs)
 
     @tasks.loop(seconds=600.0) #Toutes les 10 minutes
     async def refresh_all_users(self):
@@ -220,12 +221,12 @@ async def get_box(ctx, name="", matrix=""):
     if name:
         if matrix:
             if matrix.lower() == "-matrix":
-                box = htbot.get_box(name, matrix=True)
+                box = await thread_get_box(name, matrix=True)
             else:
                 await ctx.send("Paramètres incorrectes.")
                 return False
         else:
-            box = htbot.get_box(name)
+            box = await thread_get_box(name)
 
         if box:
                 await ctx.send("", embed=box["embed"])
@@ -240,31 +241,33 @@ async def get_box(ctx, name="", matrix=""):
             box_status = htbot.check_box(box_name)
             if box_status:
                 if matrix:
-                    box = htbot.get_box(box_name, matrix=True)
+                    box = await thread_get_box(box_name, matrix=True)
                 else:
-                    box = htbot.get_box(box_name)
+                    box = await thread_get_box(box_name)
 
                 await ctx.send("", embed=box["embed"])
 
             else:
                 await ctx.send("Tu n'as pas précisé la box.")
 
+
+async def thread_get_box(name="name", matrix=False, last=False):
+    return await LOOP.run_in_executor(THREADS["get_box"], trio_run, functools.partial(htbot.get_box, name, matrix, last))
+
+
 @bot.command()
 async def last_box(ctx, matrix=""):
     """Get info on the newest box"""
     if matrix:
         if matrix.lower() == "-matrix":
-            box = htbot.get_box(matrix=True, last=True)
+            box = await thread_get_box(matrix=True, last=True)
         else:
             await ctx.send("Paramètres incorrectes.")
             return False
     else:
-        box = htbot.get_box(last=True)
+        box = await thread_get_box(last=True)
 
-    if matrix:
-        await ctx.send("", file=box["file"], embed=box["embed"])
-    else:
-        await ctx.send("", embed=box["embed"])
+    await ctx.send("", embed=box["embed"])
 
 @bot.command()
 async def get_user(ctx, name=""):
@@ -317,11 +320,11 @@ async def update_role(discord_id, prev_rank, new_rank):
                 count += 1
             await member.edit(roles=roles)
 
-    shoutbox = get_shoutbox_channel()
+    shoutbox = await get_shoutbox_channel()
     await shoutbox.send("🎉 Félicitations {}, tu es passé au rang {} ! 🎉".format(member.mention, new_rank))
 
 
-def get_shoutbox_channel():
+async def get_shoutbox_channel():
     guilds = bot.guilds
     for guild in guilds:
         if guild.name == cfg.discord['guild_name']:
@@ -373,7 +376,7 @@ async def work_on(ctx, box_name=""):
                                 for channel in channels:
                                     if channel.name == box_name:
                                         await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
-                                        box = htbot.get_box(box_name, matrix=True)
+                                        box = await thread_get_box(box_name, matrix=True)
                                         await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
                                         await channel.send("", file=box["file"], embed=box["embed"])
                                         return True
@@ -385,7 +388,7 @@ async def work_on(ctx, box_name=""):
                                 for channel in channels:
                                     if channel.name == box_name:
                                         await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
-                                        box = htbot.get_box(box_name, matrix=True)
+                                        box = await thread_get_box(box_name, matrix=True)
                                         await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
                                         await channel.send("", file=box["file"], embed=box["embed"])
                                         return True
@@ -414,7 +417,7 @@ async def writeup(ctx, *, content=""):
 
     async def fetch_writeup(ctx, box_name=""):
         msg = await ctx.send("Téléchargement du writeup...")
-        wp = htbot.writeup(box_name)
+        wp = await LOOP.run_in_executor(THREADS["writeup_dl"], trio_run, htbot.writeup, box_name)
         await msg.edit(content="Upload du writeup...")
         if wp:
             await ctx.send("{} Voici le writeup de {} ! Bonne lecture 📖".format(ctx.author.mention, box_name.capitalize()), file=wp)
@@ -428,7 +431,7 @@ async def writeup(ctx, *, content=""):
             return False
 
         msg = await ctx.send("🔍 Je cherche les writeups...")
-        links = htbot.writeup(box_name, links=True, page=page)
+        links = await LOOP.run_in_executor(THREADS["writeup_links"], trio_run, functools.partial(htbot.writeup, box_name, links=True, page=page))
         if links:
             if links["status"] == "found":
                 await msg.delete()
