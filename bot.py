@@ -18,7 +18,9 @@ THREADS = {
     "refresh_boxs": ThreadPoolExecutor(max_workers=1),
     "writeup_links": ThreadPoolExecutor(max_workers=3),
     "writeup_dl": ThreadPoolExecutor(max_workers=1),
-    "get_box": ThreadPoolExecutor(max_workers=5)
+    "get_box": ThreadPoolExecutor(max_workers=4),
+    "get_user": ThreadPoolExecutor(max_workers=4),
+    "shoutbox": ThreadPoolExecutor(max_workers=1)
 }
 
 LOOP = asyncio.get_event_loop()
@@ -65,7 +67,7 @@ class tasksCog(commands.Cog):
                 if guild.name == cfg.discord['guild_name']:
                     member = guild.get_member(content["discord_id"])
             await shoutbox.send("👋 Bienvenue {} ! Heureux de t'avoir parmis nous.\nTu es arrivé avec le rang {} !".format(member.mention, content["level"]))
-            embed = htbot.get_user(content["htb_id"])
+            embed = await thread_get_user(content["htb_id"])
             await shoutbox.send(embed=embed)
             htbot.notif["new_role"]["state"] = False
 
@@ -113,7 +115,7 @@ class tasksCog(commands.Cog):
 
     @tasks.loop(seconds=3.0) #Toutes les 3 secondes
     async def refresh_shoutbox(self):
-        htbot.shoutbox()
+        LOOP.run_in_executor(THREADS["shoutbox"], trio_run, htbot.shoutbox)
 
     @tasks.loop(seconds=1800.0) #Toutes les 30 minutes
     async def htb_login(self):
@@ -182,7 +184,7 @@ async def verify(ctx, content=""):
     """Verify your HTB account"""
     if str(ctx.channel.type) == "private":
         if content:
-            verify_rep = htbot.verify_user(ctx.author.id, content)
+            verify_rep = trio_run(htbot.verify_user, ctx.author.id, content)
             if verify_rep == "already_in":
                 await ctx.send("You already have verified your HTB account.")
             elif verify_rep == "wrong_id":
@@ -273,21 +275,24 @@ async def last_box(ctx, matrix=""):
 async def get_user(ctx, name=""):
     """Stalk your competitors"""
     if name:
-        htb_id = htbot.htb_id_by_name(name)
+        htb_id = trio_run(htbot.htb_id_by_name, name)
         if htb_id:
-            embed = htbot.get_user(str(htb_id))
+            embed = await thread_get_user(str(htb_id))
             await ctx.send(embed=embed)
         else:
             await ctx.send("Utilisateur non trouvé.")
     else:
         await ctx.send("T'as pas oublié un truc ? :tired_face:")
 
+async def thread_get_user(htb_id):
+    return await LOOP.run_in_executor(THREADS["get_user"], trio_run, functools.partial(htbot.get_user, htb_id))
+
 @bot.command()
 async def me(ctx):
     """Get your HTB info"""
     htb_id = htbot.discord_to_htb_id(ctx.author.id)
     if htb_id:
-        embed = htbot.get_user(str(htb_id))
+        embed = await thread_get_user(str(htb_id))
         await ctx.send(embed=embed)
     else:
         await ctx.send("Vous n'avez pas enregistré de compte HTB.")

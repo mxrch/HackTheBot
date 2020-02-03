@@ -246,33 +246,30 @@ class HTBot():
         return {"embed": embed}
 
 
-    def verify_user(self, discord_id, htb_acc_id):
-        async def _verify_user():
-            req = await self.session.get("https://www.hackthebox.eu/api/users/identifier/" + htb_acc_id, headers=self.headers)
+    async def verify_user(self, discord_id, htb_acc_id):
+        req = await self.session.get("https://www.hackthebox.eu/api/users/identifier/" + htb_acc_id, headers=self.headers)
 
-            if req.status_code == 200:
-                users = self.users
+        if req.status_code == 200:
+            users = self.users
 
-                user_info = json.loads(req.text)
+            user_info = json.loads(req.text)
 
-                for user in users:
-                    if user["discord_id"] == discord_id:
-                        return "already_in"
+            for user in users:
+                if user["discord_id"] == discord_id:
+                    return "already_in"
 
-                users.append({
-                    "discord_id": discord_id,
-                    "htb_id": user_info["user_id"],
-                })
+            users.append({
+                "discord_id": discord_id,
+                "htb_id": user_info["user_id"],
+            })
 
-                await self.write_users(users)
+            await self.write_users(users)
 
-                await self.refresh_user(user_info["user_id"], new=True) #On scrape son profil
+            await self.refresh_user(user_info["user_id"], new=True) #On scrape son profil
 
-                return user_info["rank"]
-            else:
-                return "wrong_id"
-
-        return trio.run(_verify_user)
+            return user_info["rank"]
+        else:
+            return "wrong_id"
 
 
     def discord_to_htb_id(self, discord_id):
@@ -284,23 +281,19 @@ class HTBot():
         return False
 
 
-    def htb_id_by_name(self, name):
-        async def _htb_id_by_name():
+    async def htb_id_by_name(self, name):
+        params = {
+            'username': name,
+            'api_token': self.api_token
+        }
 
-            params = {
-                'username': name,
-                'api_token': self.api_token
-            }
+        req = await self.session.post("https://www.hackthebox.eu/api/user/id", params=params, headers=self.headers)
 
-            req = await self.session.post("https://www.hackthebox.eu/api/user/id", params=params, headers=self.headers)
-
-            try:
-                user = json.loads(req.text)
-                return user["id"]
-            except json.decoder.JSONDecodeError:
-                return False
-
-        return trio.run(_htb_id_by_name)
+        try:
+            user = json.loads(req.text)
+            return user["id"]
+        except json.decoder.JSONDecodeError:
+            return False
 
 
     async def extract_user_info(self, htb_id):
@@ -327,27 +320,34 @@ class HTBot():
             else:
                 infos["vip"] = False
 
+            if html.css('div.header-title > small > i.fa-users'):
+                infos["team"] = html.css('div.header-title > small > a::text').get()
+            else:
+                infos["team"] = False
+
             return infos
 
         return False
 
 
-    def get_user(self, htb_id):
-        async def _get_user():
-            infos = await self.extract_user_info(htb_id)
+    async def get_user(self, htb_id):
+        infos = await self.extract_user_info(htb_id)
 
-            if infos["vip"]:
-                vip = "  💠"
-            else:
-                vip = ""
+        if infos["vip"]:
+            vip = "  💠"
+        else:
+            vip = ""
 
-            embed = discord.Embed(title=infos["username"] + vip, color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
-            embed.set_thumbnail(url=infos["avatar"])
-            embed.add_field(name="About", value="📍 {} | 🔰 {}\n\n**Ownership** : {} | **Rank** : {} | ⚙️ **Challenges** : {}".format(infos["country"], infos["level"], infos["ownership"], infos["rank"], infos["challs"]))
+        if infos["team"]:
+            team = " | 🏡 " + infos["team"]
+        else:
+            team = ""
 
-            return embed
+        embed = discord.Embed(title=infos["username"] + vip, color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
+        embed.set_thumbnail(url=infos["avatar"])
+        embed.add_field(name="About", value="📍 {} | 🔰 {}{}\n\n**Ownership** : {} | **Rank** : {} | ⚙️ **Challenges** : {}".format(infos["country"], infos["level"], team, infos["ownership"], infos["rank"], infos["challs"]))
 
-        return trio.run(_get_user)
+        return embed
 
 
     async def refresh_user(self, htb_id, new=False):
@@ -370,6 +370,8 @@ class HTBot():
                 users[count]["users"] = infos["users"]
                 users[count]["respect"] = infos["respect"]
                 users[count]["country"] = infos["country"]
+                users[count]["vip"] = infos["vip"]
+                users[count]["team"] = infos["team"]
 
                 if new:
                     async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
@@ -378,7 +380,7 @@ class HTBot():
                         self.notif["new_user"]["content"]["htb_id"] = users[count]["htb_id"]
                         self.notif["new_user"]["content"]["level"] = infos["level"]
                         self.notif["new_user"]["state"] = True
-                        trio.sleep(10) # As notifs are checked every 5 seconds, we wait 10 secs to be sure
+                        await trio.sleep(6) # As notifs are checked every 3 seconds, we wait 6 secs to be sure
 
                 else:
                     async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
@@ -387,7 +389,7 @@ class HTBot():
                             self.notif["update_role"]["content"]["prev_rank"] = users[count]["level"]
                             self.notif["update_role"]["content"]["new_rank"] = infos["level"]
                             self.notif["update_role"]["state"] = True
-                            trio.sleep(10) # Since notifs are checked every 5 seconds, we wait 10 secs to be sure
+                            await trio.sleep(6) # Since notifs are checked every 3 seconds, we wait 6 secs to be sure
 
                 users[count]["level"] = infos["level"]
                 users[count]["rank"] = infos["rank"]
@@ -410,7 +412,6 @@ class HTBot():
                 nursery.start_soon(self.refresh_user, user["htb_id"])
 
         print("Les users ont été mis à jour !")
-
 
 
     def leaderboard(self):
@@ -442,119 +443,116 @@ class HTBot():
         return embed
 
 
-    def shoutbox(self):
-        async def _shoutbox():
+    async def shoutbox(self):
 
-            def update_last_checked(msg, checked, last_checked):
-                checked.append(msg)
-                self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
+        def update_last_checked(msg, checked, last_checked):
+            checked.append(msg)
+            self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
 
-            def notif_box_pwn(result, user):
-                self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
+        def notif_box_pwn(result, user):
+            self.notif["box_pwn"]["content"]["discord_id"] = user["discord_id"]
 
-                if result[1] == "system":
-                    self.notif["box_pwn"]["content"]["pwn"] = "root"
-                else:
-                    self.notif["box_pwn"]["content"]["pwn"] = result[1]
+            if result[1] == "system":
+                self.notif["box_pwn"]["content"]["pwn"] = "root"
+            else:
+                self.notif["box_pwn"]["content"]["pwn"] = result[1]
 
-                self.notif["box_pwn"]["content"]["box_name"] = result[2]
-                self.notif["box_pwn"]["state"] = True
+            self.notif["box_pwn"]["content"]["box_name"] = result[2]
+            self.notif["box_pwn"]["state"] = True
 
-            def notif_chall_pwn(result, user):
-                self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
-                self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
-                self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
-                self.notif["chall_pwn"]["state"] = True
+        def notif_chall_pwn(result, user):
+            self.notif["chall_pwn"]["content"]["discord_id"] = user["discord_id"]
+            self.notif["chall_pwn"]["content"]["chall_name"] = result[1]
+            self.notif["chall_pwn"]["content"]["chall_type"] = result[2]
+            self.notif["chall_pwn"]["state"] = True
 
-            def notif_box_incoming(result):
-                self.notif["new_box"]["content"]["box_name"] = result[0]
-                self.notif["new_box"]["content"]["time"] = result[1]
-                self.notif["new_box"]["content"]["incoming"] = True
-                self.notif["new_box"]["state"] = True
+        def notif_box_incoming(result):
+            self.notif["new_box"]["content"]["box_name"] = result[0]
+            self.notif["new_box"]["content"]["time"] = result[1]
+            self.notif["new_box"]["content"]["incoming"] = True
+            self.notif["new_box"]["state"] = True
 
-            def notif_new_box(result):
-                self.notif["new_box"]["content"]["box_name"] = result[0]
-                self.notif["new_box"]["content"]["time"] = ""
-                self.notif["new_box"]["content"]["incoming"] = False
-                self.notif["new_box"]["state"] = True
+        def notif_new_box(result):
+            self.notif["new_box"]["content"]["box_name"] = result[0]
+            self.notif["new_box"]["content"]["time"] = ""
+            self.notif["new_box"]["content"]["incoming"] = False
+            self.notif["new_box"]["state"] = True
 
-            def notif_vip_upgrade(user):
-                self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
-                self.notif["vip_upgrade"]["state"] = True
+        def notif_vip_upgrade(user):
+            self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
+            self.notif["vip_upgrade"]["state"] = True
 
-            req = await self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
+        req = await self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
 
-            if req.status_code == 200:
-                history = deepcopy(json.loads(req.text)["html"])
-                last_checked = deepcopy(self.last_checked)
-                users = deepcopy(self.users)
+        if req.status_code == 200:
+            history = deepcopy(json.loads(req.text)["html"])
+            last_checked = deepcopy(self.last_checked)
+            users = deepcopy(self.users)
 
-                checked = deepcopy([])
-                regexs = self.regexs
+            checked = deepcopy([])
+            regexs = self.regexs
 
-                for msg in history:
-                    if msg not in last_checked:
+            for msg in history:
+                if msg not in last_checked:
 
-                        #Check les box pwns
-                        result = re.compile(regexs["box_pwn"]).findall(msg)
-                        if result and len(result[0]) == 3:
-                            result = result[0]
-                            for user in users:
-                                if str(user["htb_id"]) == result[0]:
-                                    notif_box_pwn(result, user)
-                                    update_last_checked(msg, checked, last_checked)
-                                    await self.refresh_user(int(result[0])) #On met à jour les infos du user
-
-                                    return True
-
-                        #Check les challenges pwns
-                        result = re.compile(regexs["chall_pwn"]).findall(msg)
-                        if result and len(result[0]) == 3:
-                            result = result[0]
-                            for user in users:
-                                if str(user["htb_id"]) == result[0]:
-                                    notif_chall_pwn(result, user)
-                                    update_last_checked(msg, checked, last_checked)
-                                    await self.refresh_user(int(result[0])) #On met à jour les infos du user
-
-                                    return True
-
-                        #Check box incoming
-                        result = re.compile(regexs["new_box_incoming"]).findall(msg)
-                        if result and len(result[0]) == 2:
-                            result = result[0]
-                            old_time = self.notif["new_box"]["content"]["time"]
-                            new_time = result[1]
-                            if not old_time or (new_time.split(":")[0] == "15" and old_time.split(":")[0] != "15") or (new_time.split(":")[0] == "10" and old_time.split(":")[0] != "10") or (new_time.split(":")[0] == "05" and old_time.split(":")[0] != "05") or new_time.split(":")[0] == "01" or new_time.split(":")[0] == "00":
-                                notif_box_incoming(result)
+                    #Check les box pwns
+                    result = re.compile(regexs["box_pwn"]).findall(msg)
+                    if result and len(result[0]) == 3:
+                        result = result[0]
+                        for user in users:
+                            if str(user["htb_id"]) == result[0]:
+                                notif_box_pwn(result, user)
                                 update_last_checked(msg, checked, last_checked)
+                                await self.refresh_user(int(result[0])) #On met à jour les infos du user
 
                                 return True
 
-                        #Check new box
-                        result = re.compile(regexs["new_box_out"]).findall(msg)
-                        if type(result) is list and result and len(result) == 1:
-                            notif_new_box(result)
+                    #Check les challenges pwns
+                    result = re.compile(regexs["chall_pwn"]).findall(msg)
+                    if result and len(result[0]) == 3:
+                        result = result[0]
+                        for user in users:
+                            if str(user["htb_id"]) == result[0]:
+                                notif_chall_pwn(result, user)
+                                update_last_checked(msg, checked, last_checked)
+                                await self.refresh_user(int(result[0])) #On met à jour les infos du user
+
+                                return True
+
+                    #Check box incoming
+                    result = re.compile(regexs["new_box_incoming"]).findall(msg)
+                    if result and len(result[0]) == 2:
+                        result = result[0]
+                        old_time = self.notif["new_box"]["content"]["time"]
+                        new_time = result[1]
+                        if not old_time or (new_time.split(":")[0] == "15" and old_time.split(":")[0] != "15") or (new_time.split(":")[0] == "10" and old_time.split(":")[0] != "10") or (new_time.split(":")[0] == "05" and old_time.split(":")[0] != "05") or new_time.split(":")[0] == "01" or new_time.split(":")[0] == "00":
+                            notif_box_incoming(result)
                             update_last_checked(msg, checked, last_checked)
 
                             return True
 
-                        #Check VIP upgrade
-                        result = re.compile(regexs["vip_upgrade"]).findall(msg)
-                        if type(result) is list and result and len(result) == 1:
-                            for user in users:
-                                if str(user["htb_id"]) == result[0]:
-                                    notif_vip_upgrade(user)
-                                    update_last_checked(msg, checked, last_checked)
-                                    await self.refresh_user(int(result[0])) #On met à jour les infos du user
+                    #Check new box
+                    result = re.compile(regexs["new_box_out"]).findall(msg)
+                    if type(result) is list and result and len(result) == 1:
+                        notif_new_box(result)
+                        update_last_checked(msg, checked, last_checked)
 
-                                    return True
+                        return True
 
-                        checked.append(msg)
+                    #Check VIP upgrade
+                    result = re.compile(regexs["vip_upgrade"]).findall(msg)
+                    if type(result) is list and result and len(result) == 1:
+                        for user in users:
+                            if str(user["htb_id"]) == result[0]:
+                                notif_vip_upgrade(user)
+                                update_last_checked(msg, checked, last_checked)
+                                await self.refresh_user(int(result[0])) #On met à jour les infos du user
 
-                self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
+                                return True
 
-        return trio.run(_shoutbox)
+                    checked.append(msg)
+
+            self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
 
 
     def list_boxs(self, type=""):
