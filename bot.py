@@ -20,7 +20,8 @@ THREADS = {
     "writeup_dl": ThreadPoolExecutor(max_workers=1),
     "get_box": ThreadPoolExecutor(max_workers=4),
     "get_user": ThreadPoolExecutor(max_workers=4),
-    "shoutbox": ThreadPoolExecutor(max_workers=1)
+    "shoutbox": ThreadPoolExecutor(max_workers=1),
+    "ippsec": ThreadPoolExecutor(max_workers=1)
 }
 
 LOOP = asyncio.get_event_loop()
@@ -51,8 +52,9 @@ class tasksCog(commands.Cog):
         self.check_host_vip.start()
         self.check_notif.start()
         self.refresh_boxs.start()
-        self.manage_channels.start()
         self.refresh_all_users.start()
+        self.refresh_ippsec.start()
+        self.manage_channels.start()
         self.refresh_shoutbox.start()
 
     @tasks.loop(seconds=3.0) #Toutes les 3 secondes, check les notifications
@@ -136,6 +138,10 @@ class tasksCog(commands.Cog):
     @tasks.loop(seconds=600.0) #Toutes les 10 minutes
     async def refresh_all_users(self):
         LOOP.run_in_executor(THREADS["refresh_users"], trio_run, htbot.refresh_all_users)
+
+    @tasks.loop(seconds=600.0) #Toutes les 10 minutes
+    async def refresh_ippsec(self):
+        LOOP.run_in_executor(THREADS["ippsec"], trio_run, htbot.refresh_ippsec)
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def manage_channels(self):

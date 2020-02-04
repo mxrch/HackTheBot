@@ -27,7 +27,8 @@ class HTBot():
         self.locks = {
                 "notif": trio.Lock(),
                 "write_users": trio.Lock(),
-                "write_boxs": trio.Lock()
+                "write_boxs": trio.Lock(),
+                "ippsec": trio.Lock()
                 }
 
         self.payload = {'api_token': self.api_token}
@@ -99,6 +100,12 @@ class HTBot():
                 self.boxs = json.loads(f.read())
         else:
             self.boxs = []
+
+        if path.exists("resources/ippsec.txt"):
+            with open("resources/ippsec.txt", "r") as f:
+                self.ippsec_db = json.loads(f.read())
+        else:
+            self.ippsec_db = []
 
 
     async def write_users(self, users):
@@ -703,8 +710,7 @@ class HTBot():
 
 
     def ippsec(self, search, page):
-        f = open('resources/ippsec.txt', 'r')
-        db = json.loads(f.read())
+        db = self.ippsec_db
 
         results = []
 
@@ -744,8 +750,6 @@ class HTBot():
 
         return {"status": "found", "embed": embed}
 
-    async def update_ippsec(self):
-        pass
 
     async def check_if_host_is_vip(self):
         print("Détection du VIP...")
@@ -766,6 +770,7 @@ class HTBot():
         print("Erreur.")
         return False
 
+
     def check_member_vip(self, discord_id):
         users = self.users
         for user in users:
@@ -776,3 +781,19 @@ class HTBot():
                     return "free"
 
         return "not_sync"
+
+
+    async def refresh_ippsec(self):
+        print("Rafraichissement de la base de données d'Ippsec...")
+
+        req = await self.session.get("https://raw.githubusercontent.com/IppSec/ippsec.github.io/master/dataset.json", headers=self.headers)
+        if req.status_code == 200:
+            async with self.locks["ippsec"]:
+                self.ippsec_db = json.loads(req.text)
+                with open("resources/ippsec.txt", "w") as f:
+                    f.write(req.text)
+
+                print("La base de données d'Ippsec a été mise à jour !")
+                return True
+
+        return False
