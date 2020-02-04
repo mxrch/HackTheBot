@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import functools
 import pdb
 
-description = '''HideAndSec's slave bot'''
+description = """HideAndSec's slave bot"""
 bot = commands.Bot(command_prefix='>', description=description)
 
 htbot = HTBot(cfg.HTB['email'], cfg.HTB['password'], cfg.HTB['api_token'])
@@ -39,12 +39,16 @@ async def on_ready():
     except:
         pass
 
+    if cfg.options["writeup_legit"]:
+        print("Le bot est lancé en mode writeup legit !")
+
 #Tasks
 
 class tasksCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.htb_login.start()
+        self.check_host_vip.start()
         self.check_notif.start()
         self.refresh_boxs.start()
         self.manage_channels.start()
@@ -120,6 +124,10 @@ class tasksCog(commands.Cog):
     @tasks.loop(seconds=1800.0) #Toutes les 30 minutes
     async def htb_login(self):
         trio_run(htbot.login)
+
+    @tasks.loop(seconds=1800.0) #Toutes les 10 minutes
+    async def check_host_vip(self):
+        trio_run(htbot.check_if_host_is_vip)
 
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def refresh_boxs(self):
@@ -420,15 +428,34 @@ async def account(ctx, arg, action=""):
 async def writeup(ctx, *, content=""):
     """Download box writeups"""
 
+    wp_legit = cfg.options["writeup_legit"]
+
     async def fetch_writeup(ctx, box_name=""):
-        msg = await ctx.send("Téléchargement du writeup...")
-        wp = await LOOP.run_in_executor(THREADS["writeup_dl"], trio_run, htbot.writeup, box_name)
-        await msg.edit(content="Upload du writeup...")
-        if wp:
-            await ctx.send("{} Voici le writeup de {} ! Bonne lecture 📖".format(ctx.author.mention, box_name.capitalize()), file=wp)
-            await msg.delete()
+        if htbot.is_vip:
+            if wp_legit:
+                vip = htbot.check_member_vip(ctx.author.id)
+                if vip == "not_sync":
+                    await ctx.send("Vous n'avez pas synchronisé votre compte HTB.\nVoir : **>man verify**")
+                    return False
+                if vip == "free":
+                    await ctx.send("Vous n'êtes pas VIP, vous n'avez donc pas accès aux writeups.\nMais vous pouvez néanmoins afficher les writeups soumis par les membres ! Voir : **>man writeup**")
+                    return False
+
+            msg = await ctx.send("Téléchargement du writeup...")
+            wp = await LOOP.run_in_executor(THREADS["writeup_dl"], trio_run, htbot.writeup, box_name)
+            await msg.edit(content="Upload du writeup...")
+            if wp:
+                if wp_legit:
+                    await ctx.author.send("{} Voici le writeup de {} ! Bonne lecture 📖".format(ctx.author.mention, box_name.capitalize()), file=wp)
+                    if not str(ctx.channel.type) == "private":
+                        await ctx.send("{} Le writeup vous a été envoyé en message privé ! 😉".format(ctx.author.mention))
+                else:
+                    await ctx.send("{} Voici le writeup de {} ! Bonne lecture 📖".format(ctx.author.mention, box_name.capitalize()), file=wp)
+                await msg.delete()
+            else:
+                await ctx.send("Erreur.")
         else:
-            await ctx.send("Erreur.")
+            await ctx.send("L'hôte du bot n'est pas VIP, il est donc impossible de télécharger les writeups.\nVous pouvez néanmoins afficher les writeups soumis par les membres ! Voir : **>man writeup**")
 
     async def fetch_writeup_links(ctx, box_name, page):
         if page <= 0:

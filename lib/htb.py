@@ -18,6 +18,8 @@ class HTBot():
         self.password = password
         self.api_token = api_token
 
+        self.is_vip = False
+
         self.headers = {
             "user-agent": "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/40.0.2214.85 Safari/537.36"
         }
@@ -36,8 +38,8 @@ class HTBot():
             "new_box_incoming": "(?:.*)Get ready to spill some (?:.* blood .*! <.*>)(.*)<(?:.* available in <.*>)(.*)<(?:.*)><(?:.*)",
             "new_box_out": "(?:.*)>(.*)<(?:.*) is mass-powering on! (?:.*)",
             "vip_upgrade": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> became a <(?:.*)><(?:.*)><(?:.*)> V.I.P <(?:.*)",
-            "writeup_links" : "Submitted By: <a href=(?:.*?)>(.*?)<(?:.*?)Url: (?:.*?)href=\"(.*?)\""
-
+            "writeup_links": "Submitted By: <a href=(?:.*?)>(.*?)<(?:.*?)Url: (?:.*?)href=\"(.*?)\"",
+            "check_vip": "(?:.*)Plan\: <span class=\"c-white\">(\w*)<(?:.*)"
         }
         self.notif = {
             "update_role": {
@@ -741,3 +743,36 @@ class HTBot():
         embed.set_footer(text="📖 Page : {} / {}".format(page, total))
 
         return {"status": "found", "embed": embed}
+
+    async def update_ippsec(self):
+        pass
+
+    async def check_if_host_is_vip(self):
+        print("Détection du VIP...")
+        req = await self.session.post("https://www.hackthebox.eu/api/subscriptions/snippet", params=self.payload, headers=self.headers)
+        if req.status_code == 200:
+            body = req.text
+            status = re.compile(self.regexs["check_vip"]).findall(body)
+            if status:
+                if status[0] == "VIP":
+                    print("Vous êtes VIP.")
+                    self.is_vip = True
+                    return True
+                else:
+                    print("Vous n'êtes pas VIP.")
+                    self.is_vip = False
+                    return True
+
+        print("Erreur.")
+        return False
+
+    def check_member_vip(self, discord_id):
+        users = self.users
+        for user in users:
+            if user["discord_id"] == discord_id:
+                if user["vip"]:
+                    return "vip"
+                else:
+                    return "free"
+
+        return "not_sync"
