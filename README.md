@@ -1,6 +1,7 @@
 # HackTheBot
 
-/!\ In construction /!\
+/!\ In construction /!\\\
+You can see the progress here : https://trello.com/b/Y8Ah3ZPY/hackthebot
 
 The bot is almost ready to be used!
 In the meantime, here are some features it can already do:
