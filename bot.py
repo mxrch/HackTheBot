@@ -16,12 +16,13 @@ htbot = HTBot(cfg.HTB['email'], cfg.HTB['password'], cfg.HTB['api_token'])
 THREADS = {
     "refresh_users": ThreadPoolExecutor(max_workers=1),
     "refresh_boxs": ThreadPoolExecutor(max_workers=1),
+    "refresh_challs": ThreadPoolExecutor(max_workers=1),
     "writeup_links": ThreadPoolExecutor(max_workers=3),
     "writeup_dl": ThreadPoolExecutor(max_workers=1),
     "get_box": ThreadPoolExecutor(max_workers=4),
     "get_user": ThreadPoolExecutor(max_workers=4),
     "shoutbox": ThreadPoolExecutor(max_workers=1),
-    "ippsec": ThreadPoolExecutor(max_workers=1)
+    "ippsec": ThreadPoolExecutor(max_workers=2)
 }
 
 LOOP = asyncio.get_event_loop()
@@ -52,6 +53,7 @@ class tasksCog(commands.Cog):
         self.check_host_vip.start()
         self.check_notif.start()
         self.refresh_boxs.start()
+        self.refresh_all_challs.start()
         self.refresh_all_users.start()
         self.refresh_ippsec.start()
         self.manage_channels.start()
@@ -74,7 +76,8 @@ class tasksCog(commands.Cog):
                     member = guild.get_member(content["discord_id"])
             await shoutbox.send("👋 Bienvenue {} ! Heureux de t'avoir parmis nous.\nTu es arrivé avec le rang {} !".format(member.mention, content["level"]))
             embed = await thread_get_user(content["htb_id"])
-            await shoutbox.send(embed=embed)
+            msg = await shoutbox.send(embed=embed)
+            await msg.add_reaction("👋")
             htbot.notif["new_role"]["state"] = False
 
         elif notif["box_pwn"]["state"]:
@@ -84,7 +87,8 @@ class tasksCog(commands.Cog):
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
                     member = guild.get_member(content["discord_id"])
-            await shoutbox.send("👏 {} a eu le {} de {} !".format(member.mention, content["pwn"], content["box_name"]))
+            msg = await shoutbox.send("👏 {} a eu le {} de {} !".format(member.mention, content["pwn"], content["box_name"]))
+            await msg.add_reaction("👏")
             htbot.notif["box_pwn"]["state"] = False
 
         elif notif["chall_pwn"]["state"]:
@@ -94,7 +98,8 @@ class tasksCog(commands.Cog):
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
                     member = guild.get_member(content["discord_id"])
-            await shoutbox.send("👏 {} a réussi le challenge {} de la catégorie {} !".format(member.mention, content["chall_name"], content["chall_type"]))
+            msg = await shoutbox.send("👏 {} a réussi le challenge {} de la catégorie {} !".format(member.mention, content["chall_name"], content["chall_type"]))
+            await msg.add_reaction("👏")
             htbot.notif["chall_pwn"]["state"] = False
 
         elif notif["new_box"]["state"]:
@@ -103,7 +108,8 @@ class tasksCog(commands.Cog):
             if content["incoming"] == True:
                 await shoutbox.send("⏱️ La box {} arrive dans {} ! ⏱️".format(content["box_name"], content["time"]))
             else:
-                await shoutbox.send("@everyone 🚨 La nouvelle box {} est en ligne ! 🚨\nAurez-vous le first blood ? 🩸".format(content["box_name"]))
+                msg = await shoutbox.send("@here 🚨 La nouvelle box {} est en ligne ! 🚨\nAurez-vous le first blood ? 🩸".format(content["box_name"]))
+                await msg.add_reaction("🩸")
                 box = await thread_get_box(content["box_name"])
                 await shoutbox.send("", file=box["file"], embed=box["embed"])
             htbot.notif["new_box"]["state"] = False
@@ -115,7 +121,9 @@ class tasksCog(commands.Cog):
             for guild in guilds:
                 if guild.name == cfg.discord['guild_name']:
                     member = guild.get_member(content["discord_id"])
-            await shoutbox.send("🍾 {} est devenu VIP ! Préparez le champagne et le caviar 🥂".format(member.mention))
+            msg = await shoutbox.send("🍾 {} est devenu VIP ! Préparez le champagne et le caviar 🥂".format(member.mention))
+            await msg.add_reaction("🍾")
+            await msg.add_reaction("🥂")
             htbot.notif["vip_upgrade"]["state"] = False
 
 
@@ -134,6 +142,10 @@ class tasksCog(commands.Cog):
     @tasks.loop(seconds=60.0) #Toutes les minutes
     async def refresh_boxs(self):
         LOOP.run_in_executor(THREADS["refresh_boxs"], trio_run, htbot.refresh_boxs)
+
+    @tasks.loop(seconds=180.0) #Toutes les 3 minutes
+    async def refresh_all_challs(self):
+        LOOP.run_in_executor(THREADS["refresh_challs"], trio_run, htbot.refresh_all_challs)
 
     @tasks.loop(seconds=600.0) #Toutes les 10 minutes
     async def refresh_all_users(self):
@@ -304,7 +316,7 @@ async def thread_get_user(htb_id):
 @bot.command()
 async def me(ctx):
     """Get your HTB info"""
-    htb_id = htbot.discord_to_htb_id(ctx.author.id)
+    htb_id = htbot.discord_htb_converter(ctx.author.id, discord_to_htb=True)
     if htb_id:
         embed = await thread_get_user(str(htb_id))
         await ctx.send(embed=embed)
@@ -340,7 +352,8 @@ async def update_role(discord_id, prev_rank, new_rank):
             await member.edit(roles=roles)
 
     shoutbox = await get_shoutbox_channel()
-    await shoutbox.send("🎉 Félicitations {}, tu es passé au rang {} ! 🎉".format(member.mention, new_rank))
+    msg = await shoutbox.send("🎉 Félicitations {}, tu es passé au rang {} ! 🎉".format(member.mention, new_rank))
+    await msg.add_reaction("🎉")
 
 
 async def get_shoutbox_channel():
@@ -470,9 +483,9 @@ async def writeup(ctx, *, content=""):
 
         msg = await ctx.send("🔍 Je cherche les writeups...")
         links = await LOOP.run_in_executor(THREADS["writeup_links"], trio_run, functools.partial(htbot.writeup, box_name, links=True, page=page))
+        await msg.delete()
         if links:
             if links["status"] == "found":
-                await msg.delete()
                 await ctx.send(embed=links["embed"])
             elif links["status"] == "too_high":
                 await ctx.send("Vous avez atteint la limite des pages disponibles.")
@@ -589,6 +602,119 @@ async def ippsec(ctx, *, content=""):
 
     query = " ".join(query)
     await search(ctx, query, page=page)
+
+@bot.command()
+async def progress(ctx, *, content=""):
+    """Get members progress on a box / challenge"""
+
+    async def make_embed(ctx, target, box=False, chall=False):
+        embed = discord.Embed(title="Progress | " + target.capitalize(), color=0x9acc14)
+
+        if box:
+            box = trio_run(functools.partial(htbot.get_progress, target, box=True))
+            embed.set_thumbnail(url=box["thumbnail"])
+
+            working_on = ""
+            if box["working_on"]:
+                for user in box["working_on"]:
+                    discord_user = bot.get_user(user)
+                    working_on += discord_user.name + "\n"
+            else:
+                working_on = "*Nobody*"
+
+            embed.add_field(name="Working on", value=working_on)
+
+            user_owns = ""
+            if box["user_owns"]:
+                for user in box["user_owns"]:
+                    discord_user = bot.get_user(user)
+                    user_owns += discord_user.name + "\n"
+            else:
+                user_owns = "*Nobody*"
+
+            embed.add_field(name="User", value=user_owns)
+
+            root_owns = ""
+            if box["root_owns"]:
+                for user in box["root_owns"]:
+                    discord_user = bot.get_user(user)
+                    root_owns += discord_user.name + "\n"
+            else:
+                root_owns = "*Nobody*"
+
+            embed.add_field(name="Root", value=root_owns)
+
+            return embed
+
+        elif chall:
+            chall = trio_run(functools.partial(htbot.get_progress, target, chall=True))
+
+    # Args parser
+    args = content.split()
+    count = 0
+    box = False
+    chall = False
+    query = []
+    target_flag = False
+
+    while count < len(args):
+        if (args[count] == "-b" or args[count] == "--box") and not box:
+            box = True
+            if target_flag:
+                break
+            else:
+                count += 1
+                continue
+
+        elif (args[count] == "-c" or args[count] == "--chall") and not chall:
+            chall = True
+            if target_flag:
+                break
+            else:
+                count += 1
+                continue
+
+        else:
+            if not target_flag:
+                target_flag = True
+            query.append(args[count])
+            count += 1
+
+    if (box and chall) or (not box and not chall):
+        await ctx.send("Erreur.")
+        return False
+
+    target = " ".join(query)
+
+    if target:
+        if box:
+            box_status = htbot.check_box(target)
+            if box_status:
+                progress_stats = await make_embed(ctx, target, box=True)
+                await ctx.send("", embed=progress_stats)
+            else:
+                await ctx.send("Cette box n'existe pas.")
+        elif chall:
+            pass
+
+    else:
+        if str(ctx.channel.type) == "private":
+            if box:
+                await ctx.send("Tu n'as pas précisé la box.")
+            elif chall:
+                await ctx.send("Tu n'as pas précisé le challenge.")
+        else:
+            if box:
+                box_name = ctx.channel.name.lower()
+                box_status = htbot.check_box(box_name)
+                if box_status:
+                    progress_stats = await make_embed(ctx, box_name, box=True)
+                    await ctx.send("", embed=progress_stats)
+                else:
+                    await ctx.send("Tu n'as pas précisé la box.")
+
+            elif chall:
+                pass
 
 @bot.command()
 async def man(ctx, command=""):
@@ -772,5 +898,6 @@ async def man(ctx, command=""):
         return False
 
     await ctx.send(embed=embed)
+
 
 bot.run(cfg.discord['bot_token'])

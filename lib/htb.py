@@ -28,7 +28,10 @@ class HTBot():
                 "notif": trio.Lock(),
                 "write_users": trio.Lock(),
                 "write_boxs": trio.Lock(),
-                "ippsec": trio.Lock()
+                "write_progress": trio.Lock(),
+                "ippsec": trio.Lock(),
+                "write_challs": trio.Lock(),
+                "refresh_challs": trio.Lock()
                 }
 
         self.payload = {'api_token': self.api_token}
@@ -40,7 +43,11 @@ class HTBot():
             "new_box_out": "(?:.*)>(.*)<(?:.*) is mass-powering on! (?:.*)",
             "vip_upgrade": "(?:.*)profile\/(\d+)\">(?:.*)<\/a> became a <(?:.*)><(?:.*)><(?:.*)> V.I.P <(?:.*)",
             "writeup_links": "Submitted By: <a href=(?:.*?)>(.*?)<(?:.*?)Url: (?:.*?)href=\"(.*?)\"",
-            "check_vip": "(?:.*)Plan\: <span class=\"c-white\">(\w*)<(?:.*)"
+            "check_vip": "(?:.*)Plan\: <span class=\"c-white\">(\w*)<(?:.*)",
+            "owns": "owned (challenge|user|root|) <(?:.*?)>(?: |)<(?:.*?)>(?: |)(.*?)(?: |)<",
+            "chall": "panel-tools\"> (\d*\/\d*\/\d*) (?:.*?)(?:\[(\d*?) Points\]|) <\/span> (.*) \[by <(?:.*?)>(.*?)<\/a>\](?:.*?)\[(\d*?) solvers\](?:.*?)challenge=\"(.*?)\" data-toggle=(?:.*?)Rate Pro\">(\d*?) <(?:.*?)Rate Sucks\">(\d*?) <(?:.*)> First Blood: <(?:.*?)>(.*?)<(?:.*?)><\/span><br><br>(.*)<br> <br> (?:<p|<\/div)",
+            "chall_diff": "diffchart(\d*)\"\)\.sparkline\((\[.*?\])",
+            "chall_status": "<h3>(Active|Retired) \((?:\d*?)\)<\/h3>"
         }
         self.notif = {
             "update_role": {
@@ -101,6 +108,18 @@ class HTBot():
         else:
             self.boxs = []
 
+        if path.exists("challenges.txt"):
+            with open("challenges.txt", "r") as f:
+                self.challs = json.loads(f.read())
+        else:
+            self.challs = []
+
+        if path.exists("progress.txt"):
+            with open("progress.txt", "r") as f:
+                self.progress = json.loads(f.read())
+        else:
+            self.progress = []
+
         if path.exists("resources/ippsec.txt"):
             with open("resources/ippsec.txt", "r") as f:
                 self.ippsec_db = json.loads(f.read())
@@ -120,6 +139,20 @@ class HTBot():
             self.boxs = boxs
             with open("boxs.txt", "w") as f:
                 f.write(json.dumps(boxs))
+
+
+    async def write_challs(self, challs):
+        async with self.locks["write_challs"]:
+            self.challs = challs
+            with open("challenges.txt", "w") as f:
+                f.write(json.dumps(challs))
+
+
+    async def write_progress(self, progress):
+        async with self.locks["write_progress"]:
+            self.progress = progress
+            with open("progress.txt", "w") as f:
+                f.write(json.dumps(progress))
 
 
     async def login(self):
@@ -273,21 +306,28 @@ class HTBot():
             })
 
             await self.write_users(users)
-
             await self.refresh_user(user_info["user_id"], new=True) #On scrape son profil
 
             return user_info["rank"]
+
         else:
             return "wrong_id"
 
 
-    def discord_to_htb_id(self, discord_id):
+    def discord_htb_converter(self, id, discord_to_htb=False, htb_to_discord=False):
         users = self.users
 
-        for user in users:
-            if user["discord_id"] == discord_id:
-                return user["htb_id"]
-        return False
+        if discord_to_htb:
+            for user in users:
+                if user["discord_id"] == id:
+                    return user["htb_id"]
+            return False
+
+        elif htb_to_discord:
+            for user in users:
+                if user["htb_id"] == id:
+                    return user["discord_id"]
+            return False
 
 
     async def htb_id_by_name(self, name):
@@ -305,6 +345,252 @@ class HTBot():
             return False
 
 
+    async def get_user(self, htb_id):
+        results = await self.extract_user_info(htb_id)
+        infos = results["infos"]
+
+        if infos["vip"]:
+            vip = "  💠"
+        else:
+            vip = ""
+
+        if infos["team"]:
+            team = " | 🏡 " + infos["team"]
+        else:
+            team = ""
+
+        embed = discord.Embed(title=infos["username"] + vip, color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
+        embed.set_thumbnail(url=infos["avatar"])
+        embed.add_field(name="About", value="📍 {} | 🔰 {}{}\n\n**Ownership** : {} | **Rank** : {} | ⚙️ **Challenges** : {}".format(infos["country"], infos["level"], team, infos["ownership"], infos["rank"], infos["challs"]))
+
+        return embed
+
+
+    async def refresh_all_challs(self):
+        print("Rafraichissement des challenges...")
+        categories = ["Reversing", "Crypto", "Stego", "Pwn", "Web", "Misc", "Forensics", "Mobile", "OSINT"]
+
+        async with trio.open_nursery() as nursery:
+            for category in categories:
+                nursery.start_soon(self.refresh_chall, category)
+
+        print("Les challenges ont été mis à jour !")
+
+    async def refresh_chall(self, category):
+        new_challs = await self.extract_challs(category)
+        if not new_challs:
+            print("Erreur lors du refresh des challenges de la catégorie {}.".format(category))
+            return False
+
+        async with self.locks["refresh_challs"]:
+            challs = self.challs
+
+            if challs:
+                # Check if a chall is removed (yes, it happens)
+                old_chall_ids = [chall["id"] for chall in challs if chall["category"].lower() == category.lower()]
+                for chall in new_challs:
+                    if chall["id"] in old_chall_ids:
+                        old_chall_ids.remove(chall["id"])
+
+                if old_chall_ids: # If there's still one
+                    for old_chall_id in old_chall_ids:
+                        count = 0
+                        for chall in challs:
+                            if chall["id"] == old_chall_id:
+                                print("Un chall a été retiré !")
+                                del(challs[count])
+                            count += 1
+
+                count = 0
+                for chall in challs:
+                    new_count = 0
+                    for new_chall in new_challs:
+                        if chall["id"] == new_chall["id"]:
+                            challs[count] = new_challs.pop(new_count)
+
+                            break
+                        new_count += 1
+                    count += 1
+
+                # If there's still a chall in the list, we can send a notif that a new chall got released
+                if new_challs:
+                    for chall in new_challs:
+                        print("Nouveau chall détecté !")
+                        self.challs.append(chall)
+
+                challs = sorted(challs, key = lambda i: int(i['id']))
+
+                await self.write_challs(challs)
+                return True
+
+            else:
+                print("Rafraichissement initial des challenges !")
+                await self.write_challs(new_challs)
+                return True
+
+
+    async def extract_challs(self, category):
+
+        async def extract_challs_difficulty(html):
+            challs = html.css('script').getall()[-1]
+            results = re.compile(self.regexs["chall_diff"]).findall(challs)
+            diff_list = []
+
+            if results:
+                for result in results:
+                    diff_ratings = json.loads(result[1].replace(", ]", " ]"))
+                    diff_list.append({"id": int(result[0]), "diff": diff_ratings})
+
+                return diff_list
+
+            return False
+
+        req = await self.session.get("https://www.hackthebox.eu/home/challenges/" + category, headers=self.headers)
+        if req.status_code == 200:
+            body = req.text
+            html = Selector(text=body)
+            new_challs = []
+            diff_list = await extract_challs_difficulty(html)
+            if not diff_list:
+                return False
+
+            status_flag = None
+            parts = html.css('section.content > div.container-fluid > *').getall()
+            #infos = []
+            for part in parts:
+                status = re.compile(self.regexs["chall_status"]).findall(part)
+                #print(status)
+                if status:
+                    status_flag = status[0]
+
+                if status_flag:
+                    part = part.replace("\n", "")
+                    results = re.compile(self.regexs["chall"]).findall(part)
+                    if results:
+                        data = results[0]
+
+                        id = int(data[5])
+                        for chall in diff_list:
+                            if chall["id"] == id:
+                                diff = chall["diff"]
+
+                        if data[1]:
+                            points = int(data[1])
+                        else:
+                            points = 0
+
+                        description = data[9].replace("â€™", "'").replace("<br>", "\n").replace("</p><p>", "\n").replace("<p>", "").replace("</p>", "").strip()
+
+                        new_chall = {
+                            "id": id,
+                            "name": data[2],
+                            "category": category,
+                            "points": points,
+                            "owns": int(data[4]),
+                            "rates": {
+                                "pro": int(data[6]),
+                                "sucks": int(data[7]),
+                                "difficulty": diff
+                            },
+                            "release": data[0],
+                            "status": status_flag,
+                            "maker": data[3],
+                            "blood": data[8],
+                            "description": description
+                        }
+
+                        new_challs.append(new_chall)
+
+            return new_challs
+
+        return False
+
+
+    async def refresh_all_users(self):
+        print("Rafraichissement des users...")
+        users = self.users
+
+        async with trio.open_nursery() as nursery:
+            for user in users:
+                nursery.start_soon(self.refresh_user, user["htb_id"])
+
+        print("Les users ont été mis à jour !")
+
+
+    async def refresh_user(self, htb_id, new=False):
+        users = self.users
+        progress = self.progress
+
+        count = 0
+        for user in users:
+            if user["htb_id"] == htb_id:
+                results = await self.extract_user_info(htb_id)
+                if results:
+                    infos = results["infos"]
+                    owns = results["owns"]
+
+                    try:
+                        users[count]["username"]
+                    except KeyError:
+                        new = True
+
+                    users[count]["username"] = infos["username"]
+                    users[count]["avatar"] = infos["avatar"]
+                    users[count]["points"] = infos["points"]
+                    users[count]["systems"] = infos["systems"]
+                    users[count]["users"] = infos["users"]
+                    users[count]["respect"] = infos["respect"]
+                    users[count]["country"] = infos["country"]
+                    users[count]["vip"] = infos["vip"]
+                    users[count]["team"] = infos["team"]
+
+                    if new:
+                        progress.append({
+                            "discord_id": user["discord_id"],
+                            "working_on": None,
+                            "pwns": []
+                        })
+
+                        async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
+                            print("New user détecté !")
+                            self.notif["new_user"]["content"]["discord_id"] = user["discord_id"]
+                            self.notif["new_user"]["content"]["htb_id"] = user["htb_id"]
+                            self.notif["new_user"]["content"]["level"] = infos["level"]
+                            self.notif["new_user"]["state"] = True
+                            await trio.sleep(6) # As notifs are checked every 3 seconds, we wait 6 secs to be sure
+
+                    else:
+                        async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
+                            if users[count]["level"] != infos["level"]:
+                                self.notif["update_role"]["content"]["discord_id"] = users[count]["discord_id"]
+                                self.notif["update_role"]["content"]["prev_rank"] = users[count]["level"]
+                                self.notif["update_role"]["content"]["new_rank"] = infos["level"]
+                                self.notif["update_role"]["state"] = True
+                                await trio.sleep(6) # Since notifs are checked every 3 seconds, we wait 6 secs to be sure
+
+                    users[count]["level"] = infos["level"]
+                    users[count]["rank"] = infos["rank"]
+                    users[count]["challs"] = infos["challs"]
+                    users[count]["ownership"] = infos["ownership"]
+
+                    await self.write_users(users)
+
+                    discord_id = self.discord_htb_converter(htb_id, htb_to_discord=True)
+                    _count = 0
+                    for _user in progress:
+                        if _user["discord_id"] == discord_id:
+                            progress[_count]["pwns"] = owns
+
+                            await self.write_progress(progress)
+                            break
+
+                        _count += 1
+
+                    break
+
+            count += 1
+
+
     async def extract_user_info(self, htb_id):
         infos = {}
         req = await self.session.get("https://www.hackthebox.eu/home/users/profile/" + str(htb_id), headers=self.headers)
@@ -313,6 +599,7 @@ class HTBot():
             body = req.text
             html = Selector(text=body)
 
+            # User infos
             infos["username"] = html.css('div.header-title > h3::text').get().strip()
             infos["avatar"] = html.css('div.header-icon > img::attr(src)').get()
             infos["points"] = html.css('div.header-title > small > span[title=Points]::text').get().strip()
@@ -334,93 +621,22 @@ class HTBot():
             else:
                 infos["team"] = False
 
-            return infos
+            # User owns
+            owns = html.css('div.v-timeline').get()
+            results = re.compile(self.regexs["owns"]).findall(owns)
+
+            temp_owns = []
+
+            if results:
+                for own in results:
+                    if own[0].lower() == "user" or own[0].lower() == "root":
+                        temp_owns.append({"type": "box", "level": own[0], "name": own[1].capitalize()})
+                    elif own[0].lower() == "challenge":
+                        temp_owns.append({"type": "challenge", "level": None, "name": own[1].capitalize()})
+
+            return {"infos": infos, "owns": temp_owns}
 
         return False
-
-
-    async def get_user(self, htb_id):
-        infos = await self.extract_user_info(htb_id)
-
-        if infos["vip"]:
-            vip = "  💠"
-        else:
-            vip = ""
-
-        if infos["team"]:
-            team = " | 🏡 " + infos["team"]
-        else:
-            team = ""
-
-        embed = discord.Embed(title=infos["username"] + vip, color=0x9acc14, description="🎯 {} • 🏆 {} • 👤 {} • ⭐ {}".format(infos["points"], infos["systems"], infos["users"], infos["respect"]))
-        embed.set_thumbnail(url=infos["avatar"])
-        embed.add_field(name="About", value="📍 {} | 🔰 {}{}\n\n**Ownership** : {} | **Rank** : {} | ⚙️ **Challenges** : {}".format(infos["country"], infos["level"], team, infos["ownership"], infos["rank"], infos["challs"]))
-
-        return embed
-
-
-    async def refresh_user(self, htb_id, new=False):
-        users = self.users
-
-        count = 0
-        for user in users:
-            if user["htb_id"] == htb_id:
-                infos = await self.extract_user_info(htb_id)
-
-                try:
-                    users[count]["username"]
-                except KeyError:
-                    new = True
-
-                users[count]["username"] = infos["username"]
-                users[count]["avatar"] = infos["avatar"]
-                users[count]["points"] = infos["points"]
-                users[count]["systems"] = infos["systems"]
-                users[count]["users"] = infos["users"]
-                users[count]["respect"] = infos["respect"]
-                users[count]["country"] = infos["country"]
-                users[count]["vip"] = infos["vip"]
-                users[count]["team"] = infos["team"]
-
-                if new:
-                    async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
-                        print("New user détecté !")
-                        self.notif["new_user"]["content"]["discord_id"] = users[count]["discord_id"]
-                        self.notif["new_user"]["content"]["htb_id"] = users[count]["htb_id"]
-                        self.notif["new_user"]["content"]["level"] = infos["level"]
-                        self.notif["new_user"]["state"] = True
-                        await trio.sleep(6) # As notifs are checked every 3 seconds, we wait 6 secs to be sure
-
-                else:
-                    async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
-                        if users[count]["level"] != infos["level"]:
-                            self.notif["update_role"]["content"]["discord_id"] = users[count]["discord_id"]
-                            self.notif["update_role"]["content"]["prev_rank"] = users[count]["level"]
-                            self.notif["update_role"]["content"]["new_rank"] = infos["level"]
-                            self.notif["update_role"]["state"] = True
-                            await trio.sleep(6) # Since notifs are checked every 3 seconds, we wait 6 secs to be sure
-
-                users[count]["level"] = infos["level"]
-                users[count]["rank"] = infos["rank"]
-                users[count]["challs"] = infos["challs"]
-                users[count]["ownership"] = infos["ownership"]
-
-
-                await self.write_users(users)
-                break
-
-            count += 1
-
-
-    async def refresh_all_users(self):
-        print("Rafraichissement des users...")
-        users = self.users
-
-        async with trio.open_nursery() as nursery:
-            for user in users:
-                nursery.start_soon(self.refresh_user, user["htb_id"])
-
-        print("Les users ont été mis à jour !")
 
 
     def leaderboard(self):
@@ -491,7 +707,7 @@ class HTBot():
             self.notif["vip_upgrade"]["content"]["discord_id"] = user["discord_id"]
             self.notif["vip_upgrade"]["state"] = True
 
-        req = await self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/20?api_token=" + self.api_token, headers=self.headers)
+        req = await self.session.post("https://www.hackthebox.eu/api/shouts/get/initial/html/30?api_token=" + self.api_token, headers=self.headers)
 
         if req.status_code == 200:
             history = deepcopy(json.loads(req.text)["html"])
@@ -561,7 +777,7 @@ class HTBot():
 
                     checked.append(msg)
 
-            self.last_checked = deepcopy((checked[::-1] + last_checked)[:40])
+            self.last_checked = deepcopy((checked[::-1] + last_checked)[:50])
 
 
     def list_boxs(self, type=""):
@@ -632,6 +848,7 @@ class HTBot():
                     return "active"
 
         return False
+
 
     def account(self, discord_id, delete=False, shoutbox_onoff=False):
         pass
@@ -797,3 +1014,88 @@ class HTBot():
                 return True
 
         return False
+
+
+    async def get_progress(self, target, box=False, chall=False):
+        progress = self.progress
+
+        working_on = []
+        max = 15
+
+        if box:
+            boxs = self.boxs
+            for _box in boxs:
+                if _box["name"].lower() == target.lower():
+                    thumbnail = _box["avatar_thumb"]
+                    break
+
+            user_owns = []
+            root_owns = []
+
+            for user in progress:
+                if user["working_on"] and user["working_on"]["type"].lower() == "box" and user["working_on"]["name"].lower() == target.lower():
+                    working_on.append(user["discord_id"])
+                if len(working_on) >= max:
+                    break
+
+            users = [user["discord_id"] for user in progress]
+            count = 0
+            while users:
+                for user in progress:
+                    if user["discord_id"] in users:
+                        if len(user["pwns"]) == count or (user["discord_id"] in user_owns and user["discord_id"] in root_owns):
+                            users.remove(user["discord_id"])
+                        else:
+                            if user["pwns"][count]["type"].lower() == "box" and user["pwns"][count]["name"].lower() == target.lower():
+                                if user["pwns"][count]["level"].lower() == "user":
+                                    user_owns.append(user["discord_id"])
+                                elif user["pwns"][count]["level"].lower() == "root":
+                                    root_owns.append(user["discord_id"])
+                count += 1
+
+            if len(working_on) < max:
+                for own in user_owns:
+                    if own not in root_owns:
+                        working_on.append(own)
+                    if len(working_on) >= max:
+                        break
+
+            if len(user_owns) > max:
+                user_owns = user_owns[:max]
+
+            if len(root_owns) > max:
+                root_owns = root_owns[:max]
+
+            return {
+            "thumbnail": thumbnail,
+            "working_on": working_on,
+            "user_owns": user_owns,
+            "root_owns": root_owns
+            }
+
+        elif chall:
+            chall_owns = []
+
+            for user in progress:
+                if user["working_on"] and user["working_on"]["type"].lower() == "challenge" and user["working_on"]["name"].lower() == target.lower():
+                    working_on.append(user["discord_id"])
+                if len(working_on) >= max:
+                    break
+
+            users = [user["discord_id"] for user in progress]
+            count = 0
+            while users or len(chall_owns) >= max:
+                for user in progress:
+                    if user["discord_id"] in users:
+                        if len(user["pwns"]) == count:
+                            users.remove(user["discord_id"])
+                        else:
+                            if user["pwns"][count]["type"].lower() == "challenge" and user["pwns"][count]["name"].lower() == target.lower():
+                                chall_owns.append(user["discord_id"])
+                                users.remove(user["discord_id"])
+                count += 1
+
+            return {
+            "working_on": working_on,
+            "chall_owns": chall_owns
+            }

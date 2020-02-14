@@ -1,6 +1,8 @@
 config.py
 users.txt
 boxs.txt
+progress.txt
+challenges.txt
 owns.py
 test.py
 body.txt
