@@ -716,6 +716,24 @@ async def progress(ctx, *, content=""):
             elif chall:
                 pass
 
+
+@bot.command()
+async def get_chall(ctx, *, name=""):
+    """Get info on a chall"""
+    if name:
+        chall_status = htbot.check_chall(name)
+        if chall_status:
+            chall = trio_run(htbot.get_chall, name)
+            if chall:
+                await ctx.send("", embed=chall)
+            else:
+                await ctx.send("Erreur.")
+        else:
+            await ctx.send("Ce challenge n'existe pas.")
+    else:
+        await ctx.send("Tu n'as pas précisé le challenge.")
+
+
 @bot.command()
 async def man(ctx, command=""):
     """Here is the fucking manual"""

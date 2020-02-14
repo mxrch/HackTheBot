@@ -45,7 +45,7 @@ class HTBot():
             "writeup_links": "Submitted By: <a href=(?:.*?)>(.*?)<(?:.*?)Url: (?:.*?)href=\"(.*?)\"",
             "check_vip": "(?:.*)Plan\: <span class=\"c-white\">(\w*)<(?:.*)",
             "owns": "owned (challenge|user|root|) <(?:.*?)>(?: |)<(?:.*?)>(?: |)(.*?)(?: |)<",
-            "chall": "panel-tools\"> (\d*\/\d*\/\d*) (?:.*?)(?:\[(\d*?) Points\]|) <\/span> (.*) \[by <(?:.*?)>(.*?)<\/a>\](?:.*?)\[(\d*?) solvers\](?:.*?)challenge=\"(.*?)\" data-toggle=(?:.*?)Rate Pro\">(\d*?) <(?:.*?)Rate Sucks\">(\d*?) <(?:.*)> First Blood: <(?:.*?)>(.*?)<(?:.*?)><\/span><br><br>(.*)<br> <br> (?:<p|<\/div)",
+            "chall": "panel-tools\"> (\d*\/\d*\/\d*) (?:.*?)\"text-(success|warning|danger)\">(?:.*?)(?:\[(\d*?) Points\]|) <\/span> (.*?) \[by <(?:.*?)>(.*?)<\/a>\](?:.*?)\[(\d*?) solvers\](?:.*?)challenge=\"(.*?)\" data-toggle=(?:.*?)Rate Pro\">(\d*?) <(?:.*?)Rate Sucks\">(\d*?) <(?:.*?)> First Blood: <(?:.*?)>(.*?)<(?:.*?)><\/span><br><br>(.*?)<br> <br> (?:<p|<\/div)",
             "chall_diff": "diffchart(\d*)\"\)\.sparkline\((\[.*?\])",
             "chall_status": "<h3>(Active|Retired) \((?:\d*?)\)<\/h3>"
         }
@@ -399,6 +399,7 @@ class HTBot():
                             if chall["id"] == old_chall_id:
                                 print("Un chall a été retiré !")
                                 del(challs[count])
+                                break
                             count += 1
 
                 count = 0
@@ -407,7 +408,6 @@ class HTBot():
                     for new_chall in new_challs:
                         if chall["id"] == new_chall["id"]:
                             challs[count] = new_challs.pop(new_count)
-
                             break
                         new_count += 1
                     count += 1
@@ -469,33 +469,44 @@ class HTBot():
                     if results:
                         data = results[0]
 
-                        id = int(data[5])
+                        id = int(data[6])
                         for chall in diff_list:
                             if chall["id"] == id:
-                                diff = chall["diff"]
+                                diff_ratings = chall["diff"]
 
-                        if data[1]:
-                            points = int(data[1])
+                        if data[1] == "success":
+                            difficulty = "Easy"
+                        elif data[1] == "warning":
+                            difficulty = "Medium"
+                        elif data[1] == "danger":
+                            difficulty = "Hard"
+                        else:
+                            print("Erreur : difficulté inconnue.")
+                            return False
+
+                        if data[2]:
+                            points = int(data[2])
                         else:
                             points = 0
 
-                        description = data[9].replace("â€™", "'").replace("<br>", "\n").replace("</p><p>", "\n").replace("<p>", "").replace("</p>", "").strip()
+                        description = data[10].replace("â€™", "'").replace("<br>", "\n").replace("</p><p>", "\n").replace("<p>", "").replace("</p>", "").strip()
 
                         new_chall = {
                             "id": id,
-                            "name": data[2],
+                            "name": data[3],
                             "category": category,
+                            "difficulty": difficulty,
                             "points": points,
-                            "owns": int(data[4]),
+                            "owns": int(data[5]),
                             "rates": {
-                                "pro": int(data[6]),
-                                "sucks": int(data[7]),
-                                "difficulty": diff
+                                "pro": int(data[7]),
+                                "sucks": int(data[8]),
+                                "difficulty": diff_ratings
                             },
                             "release": data[0],
                             "status": status_flag,
-                            "maker": data[3],
-                            "blood": data[8],
+                            "maker": data[4],
+                            "blood": data[9],
                             "description": description
                         }
 
@@ -850,6 +861,20 @@ class HTBot():
         return False
 
 
+    def check_chall(self, chall_name):
+        """Check if a chall exists and return its status"""
+        challs = self.challs
+
+        for chall in challs:
+            if chall["name"].lower() == chall_name.lower():
+                if chall["status"].lower() == "active":
+                    return "active"
+                else:
+                    return "retired"
+
+        return False
+
+
     def account(self, discord_id, delete=False, shoutbox_onoff=False):
         pass
         # users = self.users
@@ -1099,3 +1124,31 @@ class HTBot():
             "working_on": working_on,
             "chall_owns": chall_owns
             }
+
+    async def get_chall(self, chall_name):
+        challs = self.challs
+
+        for chall in challs:
+            if chall["name"].lower() == chall_name.lower():
+                embed = discord.Embed(title="{} ({})".format(chall["name"], chall["category"]), color=0x9acc14)
+
+                embed.add_field(name="Rating", value="👍 {} 👎 {}".format(chall["rates"]["pro"], chall["rates"]["sucks"]), inline=True)
+                embed.add_field(name="Solvers", value="#️⃣ {}".format(chall["owns"]), inline=True)
+                embed.add_field(name="Difficulty", value="{} ({} points)".format(chall["difficulty"], chall["points"]), inline=True)
+
+                embed.add_field(name="Release", value=chall["release"])
+                embed.add_field(name="Status", value=chall["status"], inline=True)
+
+                count = 0
+                score = 0.0
+                diff_ratings = chall["rates"]["difficulty"]
+                for rating in diff_ratings:
+                    score += (rating * count)
+                    count += 1
+                real_difficulty = round(score / sum(diff_ratings), 1)
+                embed.add_field(name="Real difficulty", value="🛡️ {}/10".format(real_difficulty), inline=True)
+                embed.add_field(name="Description", value=chall["description"])
+
+                embed.set_footer(text="Maker : {}".format(chall["maker"]))
+
+                return embed
