@@ -111,7 +111,7 @@ class tasksCog(commands.Cog):
                 msg = await shoutbox.send("@here 🚨 La nouvelle box {} est en ligne ! 🚨\nAurez-vous le first blood ? 🩸".format(content["box_name"]))
                 await msg.add_reaction("🩸")
                 box = await thread_get_box(content["box_name"])
-                await shoutbox.send("", file=box["file"], embed=box["embed"])
+                await shoutbox.send("", embed=box["embed"])
             htbot.notif["new_box"]["state"] = False
 
         elif notif["vip_upgrade"]["state"]:
@@ -381,63 +381,153 @@ async def list_boxs(ctx, type=""):
         await ctx.send("", embed=embed)
 
 @bot.command()
-async def work_on(ctx, box_name=""):
+async def work_on(ctx, *, content=""):
     """Do this command when you start a new box"""
 
-    #Si le nom de la box est précisé
-    if box_name:
-        box_name = box_name.lower()
-        box_status = htbot.check_box(box_name)
-        if box_status:
-            guilds = bot.guilds
-            for guild in guilds:
-                if guild.name == cfg.discord['guild_name']:
-                    channels = guild.channels
-                    for channel in channels:
-                        if channel.name == box_name:
-                            await ctx.send("Le channel {} est à ta disposition, bonne chance ! ❤".format(channel.mention))
-                            return True
+    # Args parser
+    args = content.split()
+    count = 0
+    box = False
+    chall = False
+    query = []
+    target_flag = False
 
-                    #Si le channel n'existe pas encore
-                    categories = guild.categories
-                    if box_status == "active":
-                        for category in categories:
-                            if "box-active" in category.name.lower():
-                                await guild.create_text_channel(name=box_name, category=category)
-                                channels = guild.channels
-                                for channel in channels:
-                                    if channel.name == box_name:
-                                        await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
-                                        box = await thread_get_box(box_name, matrix=True)
-                                        await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
-                                        await channel.send("", file=box["file"], embed=box["embed"])
-                                        return True
-                    elif box_status == "retired":
-                        for category in categories:
-                            if "box-retired" in category.name.lower():
-                                await guild.create_text_channel(name=box_name, category=category)
-                                channels = guild.channels
-                                for channel in channels:
-                                    if channel.name == box_name:
-                                        await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
-                                        box = await thread_get_box(box_name, matrix=True)
-                                        await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
-                                        await channel.send("", file=box["file"], embed=box["embed"])
-                                        return True
+    while count < len(args):
+        if (args[count] == "-b" or args[count] == "--box") and not box:
+            box = True
+            if target_flag:
+                break
+            else:
+                count += 1
+                continue
+
+        elif (args[count] == "-c" or args[count] == "--chall") and not chall:
+            chall = True
+            if target_flag:
+                break
+            else:
+                count += 1
+                continue
 
         else:
-            await ctx.send("Cette box n'existe pas.")
+            if not target_flag:
+                target_flag = True
+            query.append(args[count])
+            count += 1
 
-    else:
-        if str(ctx.channel.type) == "private":
-            await ctx.send("Tu n'as pas oublié quelque chose ?")
-        else:
-            box_name = ctx.channel.name.lower()
+    if (box and chall) or (not box and not chall):
+        await ctx.send("Erreur.")
+        return False
+
+    target = " ".join(query)
+
+    if target:
+        if box:
+            #Si le nom de la box est précisé
+            box_name = target.lower()
             box_status = htbot.check_box(box_name)
             if box_status:
-                await ctx.send("Bonne chance {} ! ❤".format(ctx.author.mention))
+                status = trio_run(functools.partial(htbot.work_on, target, ctx.author.id, box=True))
+                if not status:
+                    print("Erreur.")
+                    return False
+
+                guilds = bot.guilds
+                for guild in guilds:
+                    if guild.name == cfg.discord['guild_name']:
+                        channels = guild.channels
+                        for channel in channels:
+                            if channel.name == box_name:
+                                if status == "success":
+                                    await ctx.send("Le channel {} est à ta disposition, bonne chance ! ❤".format(channel.mention))
+                                    return True
+                                elif status == "already_owned":
+                                    await ctx.send("Tu as déjà terminé cette box, mais le channel {} reste à ta disposition ❤".format(channel.mention))
+                                    return True
+
+                        #Si le channel n'existe pas encore
+                        categories = guild.categories
+                        if box_status == "active":
+                            for category in categories:
+                                if "box-active" in category.name.lower():
+                                    await guild.create_text_channel(name=box_name, category=category)
+                                    channels = guild.channels
+                                    for channel in channels:
+                                        if channel.name == box_name:
+                                            if status == "success":
+                                                await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
+                                                return True
+                                            elif status == "already_owned":
+                                                await ctx.send("Tu as déjà terminé cette box, mais j'ai quand même créé le channel {} ! Il est à ta disposition, bonne chance ❤".format(channel.mention))
+                                                return True
+
+                                            box = await thread_get_box(box_name, matrix=True)
+                                            await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
+                                            await channel.send("", embed=box["embed"])
+                                            return True
+                        elif box_status == "retired":
+                            for category in categories:
+                                if "box-retired" in category.name.lower():
+                                    await guild.create_text_channel(name=box_name, category=category)
+                                    channels = guild.channels
+                                    for channel in channels:
+                                        if channel.name == box_name:
+                                            if status == "success":
+                                                await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
+                                                return True
+                                            elif status == "already_owned":
+                                                await ctx.send("Tu as déjà terminé cette box, mais j'ai quand même créé le channel {} ! Il est à ta disposition, bonne chance ❤".format(channel.mention))
+                                                return True
+
+                                            box = await thread_get_box(box_name, matrix=True)
+                                            await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
+                                            await channel.send("", embed=box["embed"])
+                                            return True
+
             else:
+                await ctx.send("Cette box n'existe pas.")
+
+        elif chall:
+            chall_status = htbot.check_chall(target)
+            if chall_status:
+                status = trio_run(functools.partial(htbot.work_on, target, ctx.author.id, chall=True))
+                if not status:
+                    print("Erreur.")
+                    return False
+                elif status == "success":
+                    await ctx.send("Bonne chance {} ! ❤".format(ctx.author.mention))
+                    return True
+                elif status == "already_owned":
+                    await ctx.send("Tu as déjà terminé ce challenge !")
+                    return True
+            else:
+                await ctx.send("Ce challenge n'existe pas.")
+                return False
+
+    else:
+        if box:
+            if str(ctx.channel.type) == "private":
                 await ctx.send("Tu n'as pas oublié quelque chose ?")
+            else:
+                box_name = ctx.channel.name.lower()
+                box_status = htbot.check_box(box_name)
+                if box_status:
+                    status = trio_run(functools.partial(htbot.work_on, box_name, ctx.author.id, box=True))
+                    if not status:
+                        print("Erreur.")
+                        return False
+                    elif status == "success":
+                        await ctx.send("Bonne chance {} ! ❤".format(ctx.author.mention))
+                        return True
+                    elif status == "already_owned":
+                        await ctx.send("Tu as déjà terminé cette box !")
+                        return True
+                else:
+                    await ctx.send("Tu n'as pas oublié quelque chose ?")
+
+        elif chall:
+            await ctx.send("Tu n'as pas oublié quelque chose ?")
+
 
 @bot.command()
 async def account(ctx, arg, action=""):
@@ -608,10 +698,10 @@ async def progress(ctx, *, content=""):
     """Get members progress on a box / challenge"""
 
     async def make_embed(ctx, target, box=False, chall=False):
-        embed = discord.Embed(title="Progress | " + target.capitalize(), color=0x9acc14)
 
         if box:
             box = trio_run(functools.partial(htbot.get_progress, target, box=True))
+            embed = discord.Embed(title="Progress | " + box["name"], color=0x9acc14)
             embed.set_thumbnail(url=box["thumbnail"])
 
             working_on = ""
@@ -648,6 +738,29 @@ async def progress(ctx, *, content=""):
 
         elif chall:
             chall = trio_run(functools.partial(htbot.get_progress, target, chall=True))
+            embed = discord.Embed(title="Progress | {} ({})".format(chall["name"], chall["category"]), color=0x9acc14)
+
+            working_on = ""
+            if chall["working_on"]:
+                for user in chall["working_on"]:
+                    discord_user = bot.get_user(user)
+                    working_on += discord_user.name + "\n"
+            else:
+                working_on = "*Nobody*"
+
+            embed.add_field(name="Working on", value=working_on)
+
+            chall_owns = ""
+            if chall["chall_owns"]:
+                for user in chall["chall_owns"]:
+                    discord_user = bot.get_user(user)
+                    chall_owns += discord_user.name + "\n"
+            else:
+                chall_owns = "*Nobody*"
+
+            embed.add_field(name="Owns", value=chall_owns)
+
+            return embed
 
     # Args parser
     args = content.split()
@@ -695,7 +808,12 @@ async def progress(ctx, *, content=""):
             else:
                 await ctx.send("Cette box n'existe pas.")
         elif chall:
-            pass
+            chall_status = htbot.check_chall(target)
+            if chall_status:
+                progress_stats = await make_embed(ctx, target, chall=True)
+                await ctx.send("", embed=progress_stats)
+            else:
+                await ctx.send("Ce challenge n'existe pas.")
 
     else:
         if str(ctx.channel.type) == "private":
@@ -714,7 +832,7 @@ async def progress(ctx, *, content=""):
                     await ctx.send("Tu n'as pas précisé la box.")
 
             elif chall:
-                pass
+                await ctx.send("Tu n'as pas précisé le challenge.")
 
 
 @bot.command()
@@ -725,7 +843,7 @@ async def get_chall(ctx, *, name=""):
         if chall_status:
             chall = trio_run(htbot.get_chall, name)
             if chall:
-                await ctx.send("", embed=chall)
+                await ctx.send("", embed=chall["embed"])
             else:
                 await ctx.send("Erreur.")
         else:

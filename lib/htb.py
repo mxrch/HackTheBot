@@ -592,6 +592,23 @@ class HTBot():
                         if _user["discord_id"] == discord_id:
                             progress[_count]["pwns"] = owns
 
+                            if _user["working_on"]: # We reset the working on state if user got user and root, or owned a chall
+                                user_flag = False
+                                root_flag = False
+                                chall_flag = False
+                                for pwn in _user["pwns"]:
+                                    if pwn["type"].lower() == _user["working_on"]["type"].lower() and pwn["name"].lower() == _user["working_on"]["name"].lower():
+                                        if pwn["type"].lower() == "box":
+                                            if pwn["level"].lower() == "user":
+                                                user_flag = True
+                                            elif pwn["level"].lower() == "root":
+                                                root_flag = True
+                                        elif pwn["type"].lower() == "chall":
+                                            chall_flag = True
+
+                                if (user_flag and root_flag) or chall_flag:
+                                    progress[_count]["working_on"] = None
+
                             await self.write_progress(progress)
                             break
 
@@ -1052,6 +1069,7 @@ class HTBot():
             for _box in boxs:
                 if _box["name"].lower() == target.lower():
                     thumbnail = _box["avatar_thumb"]
+                    name = _box["name"]
                     break
 
             user_owns = []
@@ -1080,7 +1098,7 @@ class HTBot():
 
             if len(working_on) < max:
                 for own in user_owns:
-                    if own not in root_owns:
+                    if own not in root_owns and own not in working_on:
                         working_on.append(own)
                     if len(working_on) >= max:
                         break
@@ -1092,13 +1110,21 @@ class HTBot():
                 root_owns = root_owns[:max]
 
             return {
-            "thumbnail": thumbnail,
-            "working_on": working_on,
-            "user_owns": user_owns,
-            "root_owns": root_owns
+                "name": name,
+                "thumbnail": thumbnail,
+                "working_on": working_on,
+                "user_owns": user_owns,
+                "root_owns": root_owns
             }
 
         elif chall:
+            challs = self.challs
+            for _chall in challs:
+                if _chall["name"].lower() == target.lower():
+                    category = _chall["category"]
+                    name = _chall["name"]
+                    break
+
             chall_owns = []
 
             for user in progress:
@@ -1121,8 +1147,10 @@ class HTBot():
                 count += 1
 
             return {
-            "working_on": working_on,
-            "chall_owns": chall_owns
+                "name": name,
+                "category": category,
+                "working_on": working_on,
+                "chall_owns": chall_owns
             }
 
     async def get_chall(self, chall_name):
@@ -1151,4 +1179,53 @@ class HTBot():
 
                 embed.set_footer(text="Maker : {}".format(chall["maker"]))
 
-                return embed
+                return {"embed": embed}
+
+    async def work_on(self, target, discord_id, box=False, chall=False, pwned=False):
+        progress = self.progress
+
+        count = 0
+        for user in progress:
+            if user["discord_id"] == discord_id:
+                if box:
+                    # We check if the user is already root
+                    user_flag = False
+                    root_flag = False
+                    for pwn in user["pwns"]:
+                        if pwn["type"] == "box" and pwn["name"].lower() == target.lower():
+                            if pwn["level"] == "user":
+                                user_flag = True
+                            elif pwn["level"] == "root":
+                                root_flag = True
+
+                            if user_flag and root_flag:
+                                return "already_owned"
+
+                    boxs = self.boxs
+                    for box in boxs:
+                        if box["name"].lower() == target.lower():
+                            progress[count]["working_on"] = {"type": "box", "name": box["name"]}
+                            await self.write_progress(progress)
+                            return "success"
+
+                elif chall:
+                    # We check if the user has already owned the challenge
+                    for pwn in user["pwns"]:
+                        if pwn["type"] == "challenge" and pwn["name"].lower() == target.lower():
+                            return "already_owned"
+
+                    challs = self.challs
+                    for chall in challs:
+                        if chall["name"].lower() == target.lower():
+                            progress[count]["working_on"] = {"type": "challenge", "name": chall["name"]}
+                            await self.write_progress(progress)
+                            return "success"
+
+                elif pwned:
+                    progress[count]["working_on"] = None
+                    await self.write_progress(progress)
+                    return "success"
+
+            count += 1
+
+        return False
