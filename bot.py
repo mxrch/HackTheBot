@@ -240,21 +240,37 @@ async def verify(ctx, content=""):
             await send_verif_instructions(ctx.author)
 
 @bot.command()
-async def get_box(ctx, name="", matrix=""):
+async def get_box(ctx, *, content=""):
     """Get info on a box"""
-    if not matrix and name == "-matrix":
-        name = ""
-        matrix = "-matrix"
+    # Args parser
+    args = content.split()
+    count = 0
+    matrix = False
+    query = []
+    target_flag = False
 
-    if name:
-        if matrix:
-            if matrix.lower() == "-matrix":
-                box = await thread_get_box(name, matrix=True)
+    while count < len(args):
+        if (args[count] == "-m" or args[count] == "--matrix") and not matrix:
+            matrix = True
+            if target_flag:
+                break
             else:
-                await ctx.send("Paramètres incorrectes.")
-                return False
+                count += 1
+                continue
+
         else:
-            box = await thread_get_box(name)
+            if not target_flag:
+                target_flag = True
+            query.append(args[count])
+            count += 1
+
+    target = " ".join(query)
+
+    if target:
+        if matrix:
+            box = await thread_get_box(target, matrix=True)
+        else:
+            box = await thread_get_box(target)
 
         if box:
                 await ctx.send("", embed=box["embed"])
@@ -284,10 +300,10 @@ async def thread_get_box(name="name", matrix=False, last=False):
 
 
 @bot.command()
-async def last_box(ctx, matrix=""):
+async def last_box(ctx, param=""):
     """Get info on the newest box"""
-    if matrix:
-        if matrix.lower() == "-matrix":
+    if param:
+        if param.lower() == "-m" or param.lower() == "--matrix":
             box = await thread_get_box(matrix=True, last=True)
         else:
             await ctx.send("Paramètres incorrectes.")
@@ -328,7 +344,29 @@ async def leaderboard(ctx):
     """Get the leaderboard of the guild"""
     board = htbot.leaderboard()
     if board:
-        await ctx.send(embed=board)
+        guilds = bot.guilds
+        for guild in guilds:
+            if guild.name == cfg.discord['guild_name']:
+                bot_guild = guild
+            else:
+                await ctx.send("Erreur.")
+                return False
+
+        text = ""
+        count = 0
+        for user in board:
+            count += 1
+            if count == 1:
+                text += "👑 **{}. {}** (Points : {}, Ownership : {})\n".format(count, bot_guild.get_member(user["discord_id"]).display_name, user["points"], user["ownership"])
+            elif count == 2:
+                text += "💠 **{}. {}** (Points : {}, Ownership : {})\n".format(count, bot_guild.get_member(user["discord_id"]).display_name, user["points"], user["ownership"])
+            elif count == 3:
+                text += "🔶 **{}. {}** (Points : {}, Ownership : {})\n".format(count, bot_guild.get_member(user["discord_id"]).display_name, user["points"], user["ownership"])
+            else:
+                text += "➡ **{}. {}** (Points : {}, Ownership : {})\n".format(count, bot_guild.get_member(user["discord_id"]).display_name, user["points"], user["ownership"])
+
+        embed = discord.Embed(title="🏆 Leaderboard 🏆 | {}".format(cfg.discord["guild_name"]), color=0x9acc14, description=text)
+        await ctx.send(embed=embed)
     else:
         await ctx.send("Aucun compte HTB enregistré.\nFaites >verify pour le faire !")
 
@@ -366,19 +404,67 @@ async def get_shoutbox_channel():
                     return channel
 
 @bot.command()
-async def list_boxs(ctx, type=""):
+async def list_boxes(ctx, *, content=""):
     """list all active boxs, by difficulty or not"""
-    type = type.lower()
+
+    # Args parser
+    args = content.split()
+    count = 0
+    remaining = False
+    query = []
+    target_flag = False
+
+    while count < len(args):
+        if (args[count] == "-r" or args[count] == "--remaining") and not remaining:
+            remaining = True
+            if target_flag:
+                break
+            else:
+                count += 1
+                continue
+
+        else:
+            if not target_flag:
+                target_flag = True
+            query.append(args[count])
+            count += 1
+
+    type = " ".join(query).lower()
+
     if type:
         if type in ["easy", "medium", "hard", "insane"]:
-            embed = htbot.list_boxs(type)
-            await ctx.send("", embed=embed)
+            if remaining:
+                board = htbot.list_boxes(type=type, remaining=True, discord_id=ctx.author.id)
+            else:
+                board = htbot.list_boxes(type=type)
+
+            if board["status"] == "ok":
+                await ctx.send("", embed=board["embed"])
+                return True
+            elif board["status"] == "not_sync":
+                await ctx.send("Vous n'avez pas synchronisé votre compte HTB.\nVoir : **>man verify**")
+                return False
+            else:
+                await ctx.send("Erreur.")
+                return False
 
         else:
             await ctx.send("Difficulté inconnue.")
     else:
-        embed = htbot.list_boxs()
-        await ctx.send("", embed=embed)
+        if remaining:
+            board = htbot.list_boxes(remaining=True, discord_id=ctx.author.id)
+        else:
+            board = htbot.list_boxes()
+
+        if board["status"] == "ok":
+            await ctx.send("", embed=board["embed"])
+            return True
+        elif board["status"] == "not_sync":
+            await ctx.send("Vous n'avez pas synchronisé votre compte HTB.\nVoir : **>man verify**")
+            return False
+        else:
+            await ctx.send("Erreur.")
+            return False
 
 @bot.command()
 async def work_on(ctx, *, content=""):
@@ -700,6 +786,14 @@ async def progress(ctx, *, content=""):
     async def make_embed(ctx, target, box=False, chall=False):
 
         if box:
+            guilds = bot.guilds
+            for guild in guilds:
+                if guild.name == cfg.discord['guild_name']:
+                    bot_guild = guild
+                else:
+                    await ctx.send("Erreur.")
+                    return False
+
             box = trio_run(functools.partial(htbot.get_progress, target, box=True))
             embed = discord.Embed(title="Progress | " + box["name"], color=0x9acc14)
             embed.set_thumbnail(url=box["thumbnail"])
@@ -707,8 +801,8 @@ async def progress(ctx, *, content=""):
             working_on = ""
             if box["working_on"]:
                 for user in box["working_on"]:
-                    discord_user = bot.get_user(user)
-                    working_on += discord_user.name + "\n"
+                    discord_user = bot_guild.get_member(user)
+                    working_on += discord_user.display_name + "\n"
             else:
                 working_on = "*Nobody*"
 
@@ -717,8 +811,8 @@ async def progress(ctx, *, content=""):
             user_owns = ""
             if box["user_owns"]:
                 for user in box["user_owns"]:
-                    discord_user = bot.get_user(user)
-                    user_owns += discord_user.name + "\n"
+                    discord_user = bot_guild.get_member(user)
+                    user_owns += discord_user.display_name + "\n"
             else:
                 user_owns = "*Nobody*"
 
@@ -727,8 +821,8 @@ async def progress(ctx, *, content=""):
             root_owns = ""
             if box["root_owns"]:
                 for user in box["root_owns"]:
-                    discord_user = bot.get_user(user)
-                    root_owns += discord_user.name + "\n"
+                    discord_user = bot_guild.get_member(user)
+                    root_owns += discord_user.display_name + "\n"
             else:
                 root_owns = "*Nobody*"
 
@@ -743,8 +837,8 @@ async def progress(ctx, *, content=""):
             working_on = ""
             if chall["working_on"]:
                 for user in chall["working_on"]:
-                    discord_user = bot.get_user(user)
-                    working_on += discord_user.name + "\n"
+                    discord_user = bot_guild.get_member(user)
+                    working_on += discord_user.display_name + "\n"
             else:
                 working_on = "*Nobody*"
 
@@ -753,8 +847,8 @@ async def progress(ctx, *, content=""):
             chall_owns = ""
             if chall["chall_owns"]:
                 for user in chall["chall_owns"]:
-                    discord_user = bot.get_user(user)
-                    chall_owns += discord_user.name + "\n"
+                    discord_user = bot_guild.get_member(user)
+                    chall_owns += discord_user.display_name + "\n"
             else:
                 chall_owns = "*Nobody*"
 
@@ -937,16 +1031,16 @@ async def man(ctx, command=""):
         >leaderboard
         """)
 
-    elif command == "list_boxs":
-        embed = discord.Embed(color=0x9acc14, title="📖  >list_boxs", description="""
+    elif command == "list_boxes":
+        embed = discord.Embed(color=0x9acc14, title="📖  >list_boxes", description="""
         ***liste les boxs actives par difficulté ou non***
 
         **ARGS**
         easy/medium/hard/insane | *la difficulté*
 
         **EXAMPLES**
-        >list_boxs
-        >list_boxs hard
+        >list_boxes
+        >list_boxes hard
         """)
 
     elif command == "hello":

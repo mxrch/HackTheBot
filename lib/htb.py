@@ -187,36 +187,24 @@ class HTBot():
 
         if req.status_code == 200:
             new_boxs = json.loads(req.text)
-            old_boxs = self.boxs
-            old_boxs_ids = [d['id'] for d in old_boxs]
-            boxs = []
+            _req = await self.session.get("https://www.hackthebox.eu/api/machines/difficulty?api_token=" + self.api_token, headers=self.headers)
 
-            for box in new_boxs:
-                #If there is a new box
-                if box["id"] not in old_boxs_ids:
-                    old_boxs.append(box)
+            # Get difficulty ratings
+            if req.status_code == 200:
+                difficulty = json.loads(_req.text)
 
-            for o_box, n_box in zip(old_boxs, new_boxs):
-                o_box["name"] = n_box["name"]
-                o_box["avatar_thumb"] = n_box["avatar_thumb"]
-                o_box["ip"] = n_box["ip"]
-                o_box["os"] = n_box["os"]
-                o_box["points"] = n_box["points"]
-                o_box["rating"] = n_box["rating"]
-                o_box["retired"] = n_box["retired"]
-                o_box["retired_date"] = n_box["retired_date"]
-                o_box["user_owns"] = n_box["user_owns"]
-                o_box["root_owns"] = n_box["root_owns"]
-                o_box["release"] = n_box["release"]
-                o_box["maker"] = n_box["maker"]
-                o_box["maker2"] = n_box["maker2"]
-                o_box["free"] = n_box["free"]
+                count = 0
+                for box in new_boxs:
+                    for diff in difficulty:
+                        if box["id"] == diff["id"]:
+                            new_boxs[count]["rates"] = {"difficulty": diff["difficulty_ratings"]}
+                            break
 
-                boxs.append(o_box)
+                    count += 1
 
-            await self.write_boxs(boxs)
-            print("La liste des boxs a été mise à jour !")
-            return True
+                await self.write_boxs(new_boxs)
+                print("La liste des boxs a été mise à jour !")
+                return True
 
         return False
 
@@ -245,16 +233,16 @@ class HTBot():
             matrix_url = urllib.parse.quote_plus(charts.templates["matrix"].format(matrix_data["aggregate"], matrix_data["maker"]), safe=';/?:@&=+$,').replace('+', '%20').replace('%0A', '\\n')
 
 
-        embed = discord.Embed(title=box["name"], color=0x9acc14)
+        embed = discord.Embed(title=box["name"], color=0x9acc14, url="https://www.hackthebox.eu/home/machines/profile/" + str(box["id"]))
         embed.set_thumbnail(url=box["avatar_thumb"])
-        embed.add_field(name="IP", value=str(box["ip"]), inline=True)
-        if box["os"] == "Windows":
-            emoji = "<:windows:649003886828322827> "
-        elif box["os"] == "Linux":
-            emoji = "<:linux:649003931590066176> "
+        embed.add_field(name="IP", value=str(box["ip"]))
+        if box["os"].lower() == "windows":
+            emoji = cfg.emojis["windows"] + " "
+        elif box["os"].lower() == "linux":
+            emoji = cfg.emojis["linux"] + " "
         else:
             emoji = ""
-        embed.add_field(name="OS", value=emoji + box["os"], inline=True)
+        embed.add_field(name="OS", value=emoji + box["os"])
         if box["points"] == 20:
             difficulty = "Easy"
         elif box["points"] == 30:
@@ -266,16 +254,30 @@ class HTBot():
         else:
             difficulty = "?"
 
-        embed.add_field(name="Difficulty", value="{} ({} points)".format(difficulty, box["points"]), inline=True)
-        embed.add_field(name="Rating", value="⭐ {}".format(box["rating"]), inline=True)
+        embed.add_field(name="Difficulty", value="{} ({} points)".format(difficulty, box["points"]))
+        embed.add_field(name="Rating", value="⭐ {}".format(box["rating"]))
+
+        if sum(box["rates"]["difficulty"]) >= 1:
+            count = 0
+            score = 0.0
+            diff_ratings = box["rates"]["difficulty"]
+            for rating in diff_ratings:
+                score += (rating * count)
+                count += 1
+            real_difficulty = round(score / sum(diff_ratings), 1)
+            embed.add_field(name="Real difficulty", value="🛡️ {}/10".format(real_difficulty))
+        else:
+            embed.add_field(name="Real difficulty", value="🛡️ -")
+
+        embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
 
         if box["retired"]:
             status = "Retired"
         else:
             status = "Active"
-        embed.add_field(name="Status", value=status, inline=True)
-        embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
-        embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]), inline=True)
+        embed.add_field(name="Status", value=status)
+        embed.add_field(name="Release", value="/".join("{}".format(box["release"]).split("-")[::-1]))
+        embed.add_field(name=" ឵឵", value=" ឵឵")
 
         if matrix:
             embed.set_image(url=matrix_url)
@@ -556,12 +558,6 @@ class HTBot():
                     users[count]["team"] = infos["team"]
 
                     if new:
-                        progress.append({
-                            "discord_id": user["discord_id"],
-                            "working_on": None,
-                            "pwns": []
-                        })
-
                         async with self.locks["notif"]: # We lock notif setting to 1 task to avoid overwriting notif values
                             print("New user détecté !")
                             self.notif["new_user"]["content"]["discord_id"] = user["discord_id"]
@@ -587,9 +583,19 @@ class HTBot():
                     await self.write_users(users)
 
                     discord_id = self.discord_htb_converter(htb_id, htb_to_discord=True)
+
+                    progress_ids = [u["discord_id"] for u in progress]
+                    if discord_id not in progress_ids:
+                        progress.append({
+                            "discord_id": discord_id,
+                            "working_on": None,
+                            "pwns": []
+                        })
+
                     _count = 0
                     for _user in progress:
                         if _user["discord_id"] == discord_id:
+                            is_present_flag = True
                             progress[_count]["pwns"] = owns
 
                             if _user["working_on"]: # We reset the working on state if user got user and root, or owned a chall
@@ -609,11 +615,11 @@ class HTBot():
                                 if (user_flag and root_flag) or chall_flag:
                                     progress[_count]["working_on"] = None
 
-                            await self.write_progress(progress)
                             break
 
                         _count += 1
 
+                    await self.write_progress(progress)
                     break
 
             count += 1
@@ -678,22 +684,8 @@ class HTBot():
         board = sorted(users, key = lambda i: int(i['points']),reverse=True)
         if len(board) > 15:
             board = board[:15]
-        text = ""
-        count = 0
-        for user in board:
-            count += 1
-            if count == 1:
-                text += "👑 **{}. {}** (Points : {}, Ownership : {})\n".format(count, user["username"], user["points"], user["ownership"])
-            elif count == 2:
-                text += "💠 **{}. {}** (Points : {}, Ownership : {})\n".format(count, user["username"], user["points"], user["ownership"])
-            elif count == 3:
-                text += "🔶 **{}. {}** (Points : {}, Ownership : {})\n".format(count, user["username"], user["points"], user["ownership"])
-            else:
-                text += "➡ **{}. {}** (Points : {}, Ownership : {})\n".format(count, user["username"], user["points"], user["ownership"])
 
-        embed = discord.Embed(title="🏆 Leaderboard 🏆 | {}".format(cfg.discord["guild_name"]), color=0x9acc14, description=text)
-
-        return embed
+        return board
 
 
     async def shoutbox(self):
@@ -808,7 +800,17 @@ class HTBot():
             self.last_checked = deepcopy((checked[::-1] + last_checked)[:50])
 
 
-    def list_boxs(self, type=""):
+    def list_boxes(self, type="", remaining=False, discord_id=None):
+
+        if remaining:
+            found_flag = False
+            for user in self.users:
+                if user["discord_id"] == discord_id:
+                    username = user["username"]
+                    found_flag = True
+            if not found_flag:
+                return {"status": "not_sync"}
+
         boxs = self.boxs
 
         difficulty = {
@@ -841,27 +843,116 @@ class HTBot():
                 elif box["points"] == 50:
                     difficulty["insane"]["boxs"].append(box)
 
+        if remaining:
+            progress = self.progress
+            to_delete = []
+            for diff in difficulty.keys():
+                count = 0
+                for box in difficulty[diff]["boxs"]:
+                    for user in progress:
+                        if user["discord_id"] == discord_id:
+                            pwned_user_flag = False
+                            pwned_root_flag = False
+                            for pwn in user["pwns"]:
+                                if pwn["type"].lower() == "box" and pwn["name"].lower() == box["name"].lower() and pwn["level"].lower() == "user":
+                                    pwned_user_flag = True
+                                elif pwn["type"].lower() == "box" and pwn["name"].lower() == box["name"].lower() and pwn["level"].lower() == "root":
+                                    pwned_root_flag = True
+
+                                if pwned_user_flag and pwned_root_flag:
+                                    to_delete.append(difficulty[diff]["boxs"][count])
+                                    break
+                            break
+                    count += 1
+
+            for box_to_delete in to_delete:
+                found_flag = False
+                for diff in difficulty.keys():
+                    count = 0
+                    for box in difficulty[diff]["boxs"]:
+                        if box["name"].lower() == box_to_delete["name"].lower():
+                            found_flag = True
+                            del(difficulty[diff]["boxs"][count])
+                            break
+
+                        count += 1
+
+                    if found_flag:
+                        break
+
         #If we have to list only boxs of a certain difficulty :
         if type:
-            count = 0
-            for box in difficulty[type]["boxs"]:
-                count += 1
-                difficulty[type]["output"] = "{}{}. **{}** ({} ⭐)\n".format(difficulty[type]["output"], count, box["name"], box["rating"])
+            if difficulty[type]["boxs"]:
+                count = 0
+                for box in difficulty[type]["boxs"]:
+                    count += 1
+                    # Real difficulty
+                    if sum(box["rates"]["difficulty"]) >= 1:
+                        _count = 0
+                        score = 0.0
+                        diff_ratings = box["rates"]["difficulty"]
+                        for rating in diff_ratings:
+                            score += (rating * _count)
+                            _count += 1
+                        real_difficulty = "🛡️ {}/10".format(round(score / sum(diff_ratings), 1))
+                    else:
+                        real_difficulty = "🛡️ -"
+                    # OS emoji
+                    if box["os"].lower() == "windows":
+                        emoji = cfg.emojis["windows"] + " "
+                    elif box["os"].lower() == "linux":
+                        emoji = cfg.emojis["linux"] + " "
+                    else:
+                        emoji = ""
+                    difficulty[type]["output"] = "{}{}. {}**{}** (⭐ {}) ({})\n".format(difficulty[type]["output"], count, emoji, box["name"], box["rating"], real_difficulty)
 
-            embed = discord.Embed(color=0x9acc14, title="Active boxs 💻 | {}".format(type.capitalize()))
+            else:
+                difficulty[type]["output"] = "*Empty*"
+
+            if remaining:
+                embed = discord.Embed(color=0x9acc14, title="Active boxes 💻 | {}".format(type.capitalize()), description="**Remaining for {}**".format(username))
+            else:
+                embed = discord.Embed(color=0x9acc14, title="Active boxes 💻 | {}".format(type.capitalize()))
+
             embed.add_field(name=type.capitalize(), value=difficulty[type]["output"], inline=False)
 
         else:
-            embed = discord.Embed(color=0x9acc14, title="Active boxs 💻")
+            if remaining:
+                embed = discord.Embed(color=0x9acc14, title="Active boxes 💻", description="**Remaining for {}**".format(username))
+            else:
+                embed = discord.Embed(color=0x9acc14, title="Active boxes 💻")
+
             for diff in difficulty:
-                count = 0
-                for box in difficulty[diff]["boxs"]:
-                    count += 1
-                    difficulty[diff]["output"] = "{}{}. **{}** ({} ⭐)\n".format(difficulty[diff]["output"], count, box["name"], box["rating"])
+                if difficulty[diff]["boxs"]:
+                    count = 0
+                    for box in difficulty[diff]["boxs"]:
+                        count += 1
+                        # Real difficulty
+                        if sum(box["rates"]["difficulty"]) >= 1:
+                            _count = 0
+                            score = 0.0
+                            diff_ratings = box["rates"]["difficulty"]
+                            for rating in diff_ratings:
+                                score += (rating * _count)
+                                _count += 1
+                            real_difficulty = "🛡️ {}/10".format(round(score / sum(diff_ratings), 1))
+                        else:
+                            real_difficulty = "🛡️ -"
+                        # OS emoji
+                        if box["os"].lower() == "windows":
+                            emoji = cfg.emojis["windows"] + " • "
+                        elif box["os"].lower() == "linux":
+                            emoji = cfg.emojis["linux"] + " • "
+                        else:
+                            emoji = ""
+                        difficulty[diff]["output"] = "{}{}. {}**{}** (⭐ {}) ({})\n".format(difficulty[diff]["output"], count, emoji, box["name"], box["rating"], real_difficulty)
+
+                else:
+                    difficulty[diff]["output"] = "*Empty*"
 
                 embed.add_field(name=diff.capitalize(), value=difficulty[diff]["output"], inline=False)
 
-        return embed
+        return {"embed": embed, "status": "ok"}
 
 
     def check_box(self, box_name):
