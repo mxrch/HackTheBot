@@ -257,17 +257,20 @@ class HTBot():
         embed.add_field(name="Difficulty", value="{} ({} points)".format(difficulty, box["points"]))
         embed.add_field(name="Rating", value="⭐ {}".format(box["rating"]))
 
-        if sum(box["rates"]["difficulty"]) >= 1:
-            count = 0
-            score = 0.0
-            diff_ratings = box["rates"]["difficulty"]
-            for rating in diff_ratings:
-                score += (rating * count)
-                count += 1
-            real_difficulty = round(score / sum(diff_ratings), 1)
-            embed.add_field(name="Real difficulty", value="🛡️ {}/10".format(real_difficulty))
-        else:
-            embed.add_field(name="Real difficulty", value="🛡️ -")
+        try:
+            if sum(box["rates"]["difficulty"]) >= 1:
+                count = 0
+                score = 0.0
+                diff_ratings = box["rates"]["difficulty"]
+                for rating in diff_ratings:
+                    score += (rating * count)
+                    count += 1
+                real_difficulty = round(score / sum(diff_ratings), 1)
+                embed.add_field(name="Real difficulty", value="🛡️ {}/10".format(real_difficulty))
+            else:
+                embed.add_field(name="Real difficulty", value="*Unknown*")
+        except KeyError:
+            embed.add_field(name="Real difficulty", value="*Unknown*")
 
         embed.add_field(name="Owns", value="👤 {} #️⃣󠁲󠁯󠁯󠁴󠁿 {}".format(box["user_owns"], box["root_owns"]))
 
