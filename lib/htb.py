@@ -1323,3 +1323,213 @@ class HTBot():
             count += 1
 
         return False
+
+
+    def list_challs(self, category="", type=False, remaining=False, discord_id=None):
+
+        categories = ["reversing", "crypto", "stego", "pwn", "web", "misc", "forensics", "mobile", "osint"]
+
+        if remaining:
+            found_flag = False
+            for user in self.users:
+                if user["discord_id"] == discord_id:
+                    username = user["username"]
+                    found_flag = True
+            if not found_flag:
+                return {"status": "not_sync"}
+
+        challs = self.challs
+
+        if category:
+
+            difficulty = {
+                "easy": {
+                    "challs": [],
+                    "output": ""
+                },
+                "medium": {
+                    "challs": [],
+                    "output": ""
+                },
+                "hard": {
+                    "challs": [],
+                    "output": ""
+                }
+            }
+
+            for chall in challs:
+                if chall["status"].lower() == "active" and chall["category"].lower() == category:
+                    if chall["difficulty"].lower() == "easy":
+                        difficulty["easy"]["challs"].append(chall)
+                    elif chall["difficulty"].lower() == "medium":
+                        difficulty["medium"]["challs"].append(chall)
+                    elif chall["difficulty"].lower() == "hard":
+                        difficulty["hard"]["challs"].append(chall)
+
+            if remaining:
+                progress = self.progress
+                to_delete = []
+                for diff in difficulty.keys():
+                    count = 0
+                    for chall in difficulty[diff]["challs"]:
+                        for user in progress:
+                            if user["discord_id"] == discord_id:
+                                pwned_flag = False
+                                for pwn in user["pwns"]:
+                                    if pwn["type"].lower() == "challenge" and pwn["name"].lower() == chall["name"].lower():
+                                        to_delete.append(difficulty[diff]["challs"][count])
+                                        break
+                                break
+                        count += 1
+
+                for chall_to_delete in to_delete:
+                    found_flag = False
+                    for diff in difficulty.keys():
+                        count = 0
+                        for chall in difficulty[diff]["challs"]:
+                            if chall["name"].lower() == chall_to_delete["name"].lower():
+                                found_flag = True
+                                del(difficulty[diff]["challs"][count])
+                                break
+
+                            count += 1
+
+                        if found_flag:
+                            break
+
+            #If we have to list only challs of a certain difficulty :
+            if type:
+                if difficulty[type]["challs"]:
+                    count = 0
+                    for chall in difficulty[type]["challs"]:
+                        count += 1
+
+                        # Rating
+                        if (chall["rates"]["pro"] - chall["rates"]["sucks"]) >= 0 :
+                            rating = round((chall["rates"]["pro"] - chall["rates"]["sucks"]) / chall["rates"]["pro"] * 5, 1)
+                        else:
+                            rating = 0
+
+                        # Real difficulty
+                        if sum(chall["rates"]["difficulty"]) >= 1:
+                            _count = 0
+                            score = 0.0
+                            diff_ratings = chall["rates"]["difficulty"]
+                            for rates in diff_ratings:
+                                score += (rates * _count)
+                                _count += 1
+                            real_difficulty = "🛡️ {}/10".format(round(score / sum(diff_ratings), 1))
+                        else:
+                            real_difficulty = "🛡️ -"
+
+                        difficulty[type]["output"] = "{}{}. **{}** (⭐ {}) ({})\n".format(difficulty[type]["output"], count, chall["name"], rating, real_difficulty)
+
+                else:
+                    difficulty[type]["output"] = "*Empty*"
+
+                if remaining:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️ | {} ({})".format(category.capitalize(), type.capitalize()), description="**Remaining for {}**".format(username))
+                else:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️ | {} ({})".format(category.capitalize(), type.capitalize()))
+
+                embed.add_field(name=type.capitalize(), value=difficulty[type]["output"], inline=False)
+
+            else:
+                if remaining:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️ | {}".format(category.capitalize()), description="**Remaining for {}**".format(username))
+                else:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️ | {}".format(category.capitalize()))
+
+                for diff in difficulty:
+                    if difficulty[diff]["challs"]:
+                        count = 0
+                        for chall in difficulty[diff]["challs"]:
+                            count += 1
+
+                            # Rating
+                            if (chall["rates"]["pro"] - chall["rates"]["sucks"]) >= 0 :
+                                rating = round((chall["rates"]["pro"] - chall["rates"]["sucks"]) / chall["rates"]["pro"] * 5, 1)
+                            else:
+                                rating = 0
+
+                            # Real difficulty
+                            if sum(chall["rates"]["difficulty"]) >= 1:
+                                _count = 0
+                                score = 0.0
+                                diff_ratings = chall["rates"]["difficulty"]
+                                for rates in diff_ratings:
+                                    score += (rates * _count)
+                                    _count += 1
+                                real_difficulty = "🛡️ {}/10".format(round(score / sum(diff_ratings), 1))
+                            else:
+                                real_difficulty = "🛡️ -"
+
+                            difficulty[diff]["output"] = "{}{}. **{}** (⭐ {}) ({})\n".format(difficulty[diff]["output"], count, chall["name"], rating, real_difficulty)
+
+                    else:
+                        difficulty[diff]["output"] = "*Empty*"
+
+                    embed.add_field(name=diff.capitalize(), value=difficulty[diff]["output"], inline=False)
+
+        else:
+            # Si aucune catégorie n'est spécifiée
+            if remaining:
+                progress = self.progress
+                user = {}
+                for _user in progress:
+                    if _user["discord_id"] == discord_id:
+                        user = _user
+
+            categories_stats = {categories[i]: {"count": 0, "points": 0, "diff": 0, "rating": 0, "retired": 0} for i in range(len(categories))}
+
+            for chall in challs:
+                if remaining:
+                    found_flag = False
+                    for pwn in user["pwns"]:
+                        if pwn["type"].lower() == "challenge" and pwn["name"].lower() == chall["name"].lower():
+                            found_flag = True
+
+                    if found_flag:
+                        continue
+
+                elif type:
+                    if chall["difficulty"].lower() != type:
+                        continue
+
+                if chall["status"].lower() == "active":
+                    categories_stats[chall["category"].lower()]["count"] += 1
+                    categories_stats[chall["category"].lower()]["points"] += chall["points"]
+                    if (chall["rates"]["pro"] - chall["rates"]["sucks"]) >= 0 :
+                        categories_stats[chall["category"].lower()]["rating"] += (chall["rates"]["pro"] - chall["rates"]["sucks"]) / chall["rates"]["pro"] * 5
+
+                    if sum(chall["rates"]["difficulty"]) >= 1:
+                        _count = 0
+                        score = 0.0
+                        diff_ratings = chall["rates"]["difficulty"]
+                        for rates in diff_ratings:
+                            score += (rates * _count)
+                            _count += 1
+                        categories_stats[chall["category"].lower()]["diff"] += score / sum(diff_ratings)
+                else:
+                    categories_stats[chall["category"].lower()]["retired"] += 1
+
+            output = ""
+            for name, stats in categories_stats.items():
+                if categories_stats[name]["count"] >= 1:
+                    categories_stats[name]["diff"] = round(categories_stats[name]["diff"] / categories_stats[name]["count"], 1)
+                    categories_stats[name]["rating"] = round(categories_stats[name]["rating"] / categories_stats[name]["count"], 1)
+
+                output += "**• {}** ({} active, {} retired)\nStats : 🎯 {} • 🛡️ {}/10 • ⭐ {}\n\n".format(name.capitalize(), stats["count"], stats["retired"], stats["points"], stats["diff"], stats["rating"])
+
+            if remaining:
+                if type:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️ ({})".format(type.capitalize()), description="**Remaining for {}**\n\n{}".format(username, output))
+                else:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️", description="**Remaining for {}**\n\n{}".format(username, output))
+            else:
+                if type:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️ ({})".format(type.capitalize()), description=output)
+                else:
+                    embed = discord.Embed(color=0x9acc14, title="Active challenges ⚙️", description=output)
+
+        return {"embed": embed, "status": "ok"}

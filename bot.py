@@ -467,6 +467,58 @@ async def list_boxes(ctx, *, content=""):
             return False
 
 @bot.command()
+async def list_challs(ctx, *, content=""):
+    """list all active challs, by difficulty or not"""
+
+    # Args parser
+    args = content.split()
+    count = 0
+    remaining = False
+    difficulty = False
+    category = False
+    categories = ["reversing", "crypto", "stego", "pwn", "web", "misc", "forensics", "mobile", "osint"]
+    difficulties = ["easy", "medium", "hard"]
+
+    while count < len(args):
+        if (args[count] == "-r" or args[count] == "--remaining") and not remaining:
+            remaining = True
+            count += 1
+            continue
+
+        elif (args[count] == "-d" or args[count] == "--difficulty") and not difficulty:
+            if args[count + 1] and args[count + 1].lower() in difficulties:
+                difficulty = args[count + 1].lower()
+                count += 2
+                continue
+            else:
+                if args[count + 1]:
+                    await ctx.send("Je ne connais pas la difficulté \"{}\".\nLes difficultés existantes pour les challenges sont : **Easy, Medium et Hard.**".format(args[count + 1]))
+                else:
+                    await ctx.send("Vous n'avez pas précisé la difficulté.\nLes difficultés existantes pour les challenges sont : **Easy, Medium et Hard.**")
+                return False
+
+        elif args[count].lower() in categories:
+            category = args[count].lower()
+            count += 1
+            continue
+
+        else:
+            await ctx.send("Je ne connais pas le paramètre \"{}\".\nVoir : **>man list_challs**".format(args[count]))
+            return False
+
+    board = htbot.list_challs(category=category, type=difficulty, remaining=remaining, discord_id=ctx.author.id)
+    if board["status"] == "ok":
+        await ctx.send("", embed=board["embed"])
+        return True
+    elif board["status"] == "not_sync":
+        await ctx.send("Vous n'avez pas synchronisé votre compte HTB.\nVoir : **>man verify**")
+        return False
+    else:
+        await ctx.send("Erreur.")
+        return False
+
+
+@bot.command()
 async def work_on(ctx, *, content=""):
     """Do this command when you start a new box"""
 
@@ -542,10 +594,8 @@ async def work_on(ctx, *, content=""):
                                         if channel.name == box_name:
                                             if status == "success":
                                                 await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
-                                                return True
                                             elif status == "already_owned":
                                                 await ctx.send("Tu as déjà terminé cette box, mais j'ai quand même créé le channel {} ! Il est à ta disposition, bonne chance ❤".format(channel.mention))
-                                                return True
 
                                             box = await thread_get_box(box_name, matrix=True)
                                             await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
@@ -560,10 +610,8 @@ async def work_on(ctx, *, content=""):
                                         if channel.name == box_name:
                                             if status == "success":
                                                 await ctx.send("J'ai créé le channel {}, il est à ta disposition ! Bonne chance ❤".format(channel.mention))
-                                                return True
                                             elif status == "already_owned":
                                                 await ctx.send("Tu as déjà terminé cette box, mais j'ai quand même créé le channel {} ! Il est à ta disposition, bonne chance ❤".format(channel.mention))
-                                                return True
 
                                             box = await thread_get_box(box_name, matrix=True)
                                             await channel.send("✨ Channel créé ! {}".format(ctx.author.mention))
@@ -784,15 +832,17 @@ async def progress(ctx, *, content=""):
     """Get members progress on a box / challenge"""
 
     async def make_embed(ctx, target, box=False, chall=False):
+        guilds = bot.guilds
+        bot_guild = False
+        for guild in guilds:
+            if guild.name == cfg.discord['guild_name']:
+                bot_guild = guild
+
+        if not bot_guild:
+            await ctx.send("Erreur.")
+            return False
 
         if box:
-            guilds = bot.guilds
-            for guild in guilds:
-                if guild.name == cfg.discord['guild_name']:
-                    bot_guild = guild
-                else:
-                    await ctx.send("Erreur.")
-                    return False
 
             box = trio_run(functools.partial(htbot.get_progress, target, box=True))
             embed = discord.Embed(title="Progress | " + box["name"], color=0x9acc14)
